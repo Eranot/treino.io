@@ -4001,6 +4001,338 @@ async function toggleCropper() {
     showCropperModal.value = !showCropperModal.value;
 }
 
+/**
+ * Retorna objetos que são "cromo" do editor e não devem aparecer na exportação.
+ * Mantém imagens principais e objetos do usuário intactos.
+ */
+function getEditorChromeObjects() {
+    if (!fabricCanvas) return [];
+    return fabricCanvas.getObjects().filter((obj) => {
+        if (!obj) return false;
+        // Bordas/área do editor
+        if (obj.id === 'drawingArea') return true;
+        // Handlers de resize do editor
+        if (obj.class === 'resize-handle') return true;
+        // Clones temporários de hover (highlight)
+        if (typeof obj.id === 'string' && obj.id.endsWith('-hover')) return true;
+        return false;
+    });
+}
+
+/**
+ * Esconde temporariamente o cromo do editor (drawingArea/handlers/hover) para exportação.
+ * IMPORTANTE: também limpa stroke/fill/border dos clipPaths e drawingArea para evitar linhas de 1px.
+ * Remove indicadores de seleção (borders, controls, corners) e estados de hover de TODOS os objetos.
+ * Adiciona um retângulo branco temporário de fundo no lugar do drawingArea.
+ * Retorna uma função para restaurar o estado original.
+ */
+function hideEditorChromeForExport() {
+    // 1) Descarta qualquer objeto ativo (remove selection box)
+    fabricCanvas.discardActiveObject();
+    
+    // 2) Limpa todos os estados de hover (clones temporários de highlight) - AGRESSIVAMENTE
+    clearAllHoverStates();
+    
+    // 2.1) Remove QUALQUER objeto com id contendo '-hover' (dupla verificação robusta)
+    const hoverObjects = fabricCanvas.getObjects().filter(obj => 
+        obj?.id && typeof obj.id === 'string' && obj.id.includes('-hover')
+    );
+    hoverObjects.forEach(obj => fabricCanvas.remove(obj));
+    
+    // 2.2) Force render após remoção dos hovers
+    fabricCanvas.requestRenderAll();
+    
+    // 3) REMOVE FISICAMENTE o cromo do editor (drawingArea, handlers, etc) do canvas
+    // Não basta marcar como invisible - o toCanvasElement() ignora isso!
+    const chrome = getEditorChromeObjects();
+    const previous = chrome.map((obj) => ({
+        obj,
+        visible: obj.visible,
+        excludeFromExport: obj.excludeFromExport,
+        opacity: obj.opacity,
+    }));
+
+    // Remove todos os objetos de chrome do canvas (serão readicionados depois)
+    chrome.forEach((obj) => {
+        fabricCanvas.remove(obj);
+    });
+
+    // 4) Remove temporariamente borders/controls/corners de TODOS os objetos (não só do cromo)
+    const allObjectsControlsPrev = [];
+    fabricCanvas.getObjects().forEach((obj) => {
+        if (!obj) return;
+        allObjectsControlsPrev.push({
+            obj,
+            hasBorders: obj.hasBorders,
+            hasControls: obj.hasControls,
+            borderColor: obj.borderColor,
+            cornerColor: obj.cornerColor,
+            cornerStrokeColor: obj.cornerStrokeColor,
+            transparentCorners: obj.transparentCorners,
+        });
+        obj.set({
+            hasBorders: false,
+            hasControls: false,
+            borderColor: null,
+            cornerColor: null,
+            cornerStrokeColor: null,
+        });
+    });
+
+    // 5) Limpa stroke/border do drawingArea (pode causar linhas mesmo com strokeWidth: 0)
+    const drawingAreaPrev = drawingArea.value ? {
+        stroke: drawingArea.value.stroke,
+        strokeWidth: drawingArea.value.strokeWidth,
+        hasBorders: drawingArea.value.hasBorders,
+        borderColor: drawingArea.value.borderColor,
+    } : null;
+
+    if (drawingArea.value) {
+        drawingArea.value.set({
+            stroke: null,
+            strokeWidth: 0,
+            hasBorders: false,
+            borderColor: null,
+        });
+    }
+
+    // 6) Limpa fill/stroke dos clipPaths (red/blue podem vazar 1px)
+    const clipPathsPrev = [];
+    if (firstClipPath.value) {
+        clipPathsPrev.push({
+            obj: firstClipPath.value,
+            fill: firstClipPath.value.fill,
+            stroke: firstClipPath.value.stroke,
+            strokeWidth: firstClipPath.value.strokeWidth,
+        });
+        firstClipPath.value.set({
+            fill: null,
+            stroke: null,
+            strokeWidth: 0,
+        });
+    }
+    if (secondClipPath.value) {
+        clipPathsPrev.push({
+            obj: secondClipPath.value,
+            fill: secondClipPath.value.fill,
+            stroke: secondClipPath.value.stroke,
+            strokeWidth: secondClipPath.value.strokeWidth,
+        });
+        secondClipPath.value.set({
+            fill: null,
+            stroke: null,
+            strokeWidth: 0,
+        });
+    }
+
+    // 7) Cria retângulo branco temporário de fundo (abaixo de tudo)
+    let tempBackground = null;
+    if (drawingArea.value) {
+        tempBackground = new Rect({
+            left: drawingArea.value.left,
+            top: drawingArea.value.top,
+            width: drawingArea.value.width,
+            height: drawingArea.value.height,
+            fill: '#FFFFFF',
+            stroke: null,
+            strokeWidth: 0,
+            selectable: false,
+            evented: false,
+            originX: 'center',
+            originY: 'center',
+            id: '__export_bg__',
+        });
+        fabricCanvas.add(tempBackground);
+        fabricCanvas.sendObjectToBack(tempBackground);
+        if (firstImage.value) fabricCanvas.sendObjectToBack(firstImage.value);
+        if (secondImage.value) fabricCanvas.sendObjectToBack(secondImage.value);
+        if (tempBackground) fabricCanvas.sendObjectToBack(tempBackground);
+    }
+
+    fabricCanvas.requestRenderAll();
+
+    return () => {
+        // Remove o fundo temporário
+        if (tempBackground) {
+            fabricCanvas.remove(tempBackground);
+        }
+
+        // Readiciona os objetos de chrome ao canvas (foram removidos para a exportação)
+        chrome.forEach((obj) => {
+            fabricCanvas.add(obj);
+        });
+
+        // Restaura propriedades do chrome
+        previous.forEach(({ obj, visible, excludeFromExport, opacity }) => {
+            obj.set({
+                visible,
+                excludeFromExport,
+                opacity,
+            });
+        });
+
+        // Restaura controls/borders de todos os objetos
+        allObjectsControlsPrev.forEach(({ obj, hasBorders, hasControls, borderColor, cornerColor, cornerStrokeColor, transparentCorners }) => {
+            obj.set({
+                hasBorders,
+                hasControls,
+                borderColor,
+                cornerColor,
+                cornerStrokeColor,
+                transparentCorners,
+            });
+        });
+
+        // Restaura clipPaths
+        clipPathsPrev.forEach(({ obj, fill, stroke, strokeWidth }) => {
+            obj.set({ fill, stroke, strokeWidth });
+        });
+
+        // Restaura drawingArea
+        if (drawingAreaPrev && drawingArea.value) {
+            drawingArea.value.set(drawingAreaPrev);
+        }
+
+        fabricCanvas.requestRenderAll();
+    };
+}
+
+/**
+ * Retângulo de recorte (crop) para exportar exatamente a área de desenho.
+ * Arredonda valores para evitar linhas de 1px por subpixel.
+ */
+function getExportCropRect(drawingAreaObj, insetPx = 0) {
+    if (!drawingAreaObj) return null;
+    // Usa a geometria do próprio drawingArea (origin center) — evita discrepâncias do boundingRect
+    const raw = {
+        left: Math.round(drawingAreaObj.left - drawingAreaObj.width / 2),
+        top: Math.round(drawingAreaObj.top - drawingAreaObj.height / 2),
+        width: Math.round(drawingAreaObj.width),
+        height: Math.round(drawingAreaObj.height),
+    };
+
+    // Inset para remover linhas/halo de 1px (antialias/subpixel) do contorno do editor/clip
+    const inset = Math.max(0, Math.floor(insetPx || 0));
+    let left = raw.left + inset;
+    let top = raw.top + inset;
+    let width = raw.width - inset * 2;
+    let height = raw.height - inset * 2;
+
+    // Evita valores inválidos
+    width = Math.max(1, width);
+    height = Math.max(1, height);
+
+    // Clampa dentro do canvas (evita “vazar” 1px e pegar background)
+    if (fabricCanvas) {
+        const maxW = fabricCanvas.getWidth();
+        const maxH = fabricCanvas.getHeight();
+        left = Math.max(0, Math.min(left, maxW - 1));
+        top = Math.max(0, Math.min(top, maxH - 1));
+        width = Math.min(width, maxW - left);
+        height = Math.min(height, maxH - top);
+    }
+
+    return { left, top, width, height };
+}
+
+/**
+ * Força um fundo sólido (normalmente branco) durante a exportação para evitar "bordas" do background do canvas.
+ * Retorna uma função para restaurar o background anterior.
+ */
+function setCanvasBackgroundForExport(color = '#FFFFFF') {
+    if (!fabricCanvas) return () => {};
+    const prev = fabricCanvas.backgroundColor;
+    fabricCanvas.backgroundColor = color;
+    fabricCanvas.requestRenderAll();
+    return () => {
+        fabricCanvas.backgroundColor = prev;
+        fabricCanvas.requestRenderAll();
+    };
+}
+
+/**
+ * Alinha objetos críticos em coordenadas inteiras (pixel grid) para evitar linhas finas por antialias/subpixel.
+ * Em modos com divisão por 2, força dimensão par para o "meio" cair em inteiro.
+ */
+async function snapCriticalGeometryForExport() {
+    if (!fabricCanvas || !drawingArea.value) return () => {};
+
+    const snapshots = [];
+    const snapSet = (obj, props) => {
+        if (!obj) return;
+        const prev = {};
+        Object.keys(props).forEach((k) => { prev[k] = obj[k]; });
+        snapshots.push({ obj, prev });
+        obj.set(props);
+        obj.setCoords?.();
+    };
+
+    // 1) Snap do drawingArea (mantém scale normalizada)
+    let daW = Math.round(drawingArea.value.width);
+    let daH = Math.round(drawingArea.value.height);
+    const daLeft = Math.round(drawingArea.value.left);
+    const daTop = Math.round(drawingArea.value.top);
+
+    // Força dimensão par quando o layout divide por 2, para evitar clipWidth/clipHeight .5
+    if (displayMode.value === 'ltr' && daW % 2 !== 0) daW += 1;
+    if (displayMode.value === 'ttb' && daH % 2 !== 0) daH += 1;
+
+    snapSet(drawingArea.value, {
+        left: daLeft,
+        top: daTop,
+        width: daW,
+        height: daH,
+        scaleX: 1,
+        scaleY: 1,
+    });
+
+    // 2) Recalcula e snap dos clipPaths com base no drawingArea alinhado
+    await updateClipPathsSize();
+    if (firstClipPath.value) {
+        snapSet(firstClipPath.value, {
+            left: Math.round(firstClipPath.value.left),
+            top: Math.round(firstClipPath.value.top),
+            width: Math.round(firstClipPath.value.width),
+            height: Math.round(firstClipPath.value.height),
+        });
+    }
+    if (secondClipPath.value) {
+        snapSet(secondClipPath.value, {
+            left: Math.round(secondClipPath.value.left),
+            top: Math.round(secondClipPath.value.top),
+            width: Math.round(secondClipPath.value.width),
+            height: Math.round(secondClipPath.value.height),
+        });
+    }
+
+    // 3) Snap leve das imagens (ajuda se elas estiverem em .5)
+    if (firstImage.value) {
+        snapSet(firstImage.value, {
+            left: Math.round(firstImage.value.left),
+            top: Math.round(firstImage.value.top),
+        });
+    }
+    if (secondImage.value) {
+        snapSet(secondImage.value, {
+            left: Math.round(secondImage.value.left),
+            top: Math.round(secondImage.value.top),
+        });
+    }
+
+    fabricCanvas.requestRenderAll();
+
+    // restore
+    return () => {
+        // restaura na ordem inversa pra reduzir inconsistência visual
+        for (let i = snapshots.length - 1; i >= 0; i--) {
+            const { obj, prev } = snapshots[i];
+            obj.set(prev);
+            obj.setCoords?.();
+        }
+        fabricCanvas.requestRenderAll();
+    };
+}
+
 async function finishDrawing() {
     finishing.value = true;
     if (fabricCanvas && drawingArea) {
@@ -4041,14 +4373,8 @@ async function finishDrawing() {
 
         fabricCanvas.requestRenderAll();
 
-        // hide temporarely the drawing area and its handles
-        // drawingArea.value.visible = false;
-        const handles = fabricCanvas.getObjects().filter(o => o.class === 'resize-handle');
-        handles.forEach(handle => handle.visible = false);
-
-        // Remover todos os elementos de hover
-        const hoverObjects = fabricCanvas.getObjects().filter(o => o.id && o.id.endsWith('-hover'));
-        hoverObjects.forEach(obj => fabricCanvas.remove(obj));
+        // Limpa seleção e estados de hover (não faz parte do resultado)
+        clearAllHoverStates();
         fabricCanvas.discardActiveObject();
         fabricCanvas.requestRenderAll();
 
@@ -4064,7 +4390,30 @@ async function finishDrawing() {
             fabricCanvas.bringObjectToFront(watermark.value);
         }
 
+        // Fundo branco durante exportação para não vazar o cinza do canvas (#F1F5F9)
+        const restoreBackground = setCanvasBackgroundForExport('#FFFFFF');
+
+        // Alinha geometria crítica em pixel-grid (evita linhas finas no topo/baixo)
+        const restoreSnapping = await snapCriticalGeometryForExport();
+
+        // IMPORTANT: esconde apenas o cromo do editor durante a exportação
+        const restoreChrome = hideEditorChromeForExport();
+
         fabricCanvas.requestRenderAll();
+
+        // Dupla verificação: lista todos os objetos para debug
+        const allObjsIds = fabricCanvas.getObjects().map(o => ({ id: o.id, type: o.type, class: o.class }));
+        console.log('🔍 Objects before export:', allObjsIds);
+        
+        // Verifica se ainda há hover escapando
+        const remainingHovers = fabricCanvas.getObjects().filter(o => 
+            o?.id && typeof o.id === 'string' && o.id.includes('-hover')
+        );
+        if (remainingHovers.length > 0) {
+            console.warn('⚠️ Found remaining hover objects:', remainingHovers.map(o => o.id));
+            remainingHovers.forEach(obj => fabricCanvas.remove(obj));
+            fabricCanvas.requestRenderAll();
+        }
 
         await new Promise((resolve) => setTimeout(resolve, 1000)); // Esperamos um segundo para garantir que o canvas foi redesenhado
 
@@ -4074,15 +4423,11 @@ async function finishDrawing() {
             console.log('Watermark visibility on export:', watermark ? watermark.visible : 'not found');
         }
 
+        // Recorta exatamente a área do drawingArea (agora alinhada em pixel-grid)
+        const crop = getExportCropRect(drawingArea.value, 0);
         const data = await new Promise((resolve, reject) => {
             fabricCanvas
-                .toCanvasElement(
-                    1, {
-                    top: drawingArea.value.top - (drawingArea.value.getScaledHeight() / 2),
-                    left: drawingArea.value.left - (drawingArea.value.getScaledWidth() / 2),
-                    width: drawingArea.value.getScaledWidth(),
-                    height: drawingArea.value.getScaledHeight(),
-                })
+                .toCanvasElement(1, crop)
                 .toBlob(
                     (blob) => {
                         if (blob) resolve(blob);
@@ -4098,13 +4443,14 @@ async function finishDrawing() {
         fabricCanvas.setViewportTransform(fabricCanvas.viewportTransform);
         fabricCanvas.renderAll();
 
+        // Restaura o cromo do editor após exportar
+        restoreChrome();
+        restoreSnapping();
+        restoreBackground();
+
         emit('finished', data);
 
-        // after a short delay, show the drawing area and its handles again
-        if (drawingArea.value) {
-            drawingArea.value.visible = true;
-        }
-        handles.forEach(handle => handle.visible = true);
+        // após exportar, o editor pode continuar visível normalmente
         fabricCanvas.requestRenderAll();
 
         setTimeout(() => {
