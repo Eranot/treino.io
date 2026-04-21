@@ -672,6 +672,10 @@ const imageToCrop = ref(null);
 const drawingAreaWidth = ref(0);
 const drawingAreaHeight = ref(0);
 
+// Fator de escala aplicado ao carregar as imagens para caber no container.
+// Usado na exportação para restaurar a resolução original (evita baixa qualidade no celular).
+const fitScale = ref(1);
+
 const activeObject = ref();
 const objectScaleX = ref(1);
 const objectScaleY = ref(1);
@@ -1857,9 +1861,13 @@ function handleKeyDown(e) {
         redo();
     }
     // Atalho para Remover: Delete ou Backspace
+    // Não dispara quando um IText está em modo de edição (senão apaga o objeto inteiro em vez da letra)
     if (e.key === 'Delete' || e.key === 'Backspace') {
-        e.preventDefault();
-        removeSelectedObjects();
+        const editingText = activeObject.value?.type === 'i-text' && activeObject.value?.isEditing;
+        if (!editingText) {
+            e.preventDefault();
+            removeSelectedObjects();
+        }
     }
 
     if (e.key === 'Escape') {
@@ -3547,6 +3555,9 @@ async function loadImages() {
         imgLeft.scale(scale * preScaleLeft);
         imgRight.scale(scale * preScaleRight);
 
+        // Guarda a escala de ajuste ao container para usar como multiplicador na exportação
+        fitScale.value = scale;
+
         // set id for images e flags iniciais
         imgLeft.set({
             id: 'firstImage',
@@ -4425,9 +4436,11 @@ async function finishDrawing() {
 
         // Recorta exatamente a área do drawingArea (agora alinhada em pixel-grid)
         const crop = getExportCropRect(drawingArea.value, 0);
+        // Multiplicador para restaurar a resolução original (equipara qualidade entre desktop e mobile)
+        const exportMultiplier = Math.max(1, 1 / (fitScale.value || 1));
         const data = await new Promise((resolve, reject) => {
             fabricCanvas
-                .toCanvasElement(1, crop)
+                .toCanvasElement(exportMultiplier, crop)
                 .toBlob(
                     (blob) => {
                         if (blob) resolve(blob);
@@ -4494,6 +4507,9 @@ async function compareImages() {
         const fiClone = await objects.find(obj => obj.id === 'firstImage').clone();
         const siClone = await objects.find(obj => obj.id === 'secondImage').clone();
 
+        // Multiplicador para restaurar a resolução original (equipara qualidade entre desktop e mobile)
+        const exportMultiplier = Math.max(1, 1 / (fitScale.value || 1));
+
         const firstImageDataUrl = await new Promise( async (resolve, reject) => {
             
             const clipPath = fiClone.clipPath;
@@ -4526,7 +4542,7 @@ async function compareImages() {
             //     resolve(dataUrl);
             // });
 
-            tempCanvas.toCanvasElement(1, {
+            tempCanvas.toCanvasElement(exportMultiplier, {
                 width: clipPath.width,
                 height: clipPath.height,
             })
@@ -4566,7 +4582,7 @@ async function compareImages() {
             tempCanvas.add(siClone);
             tempCanvas.requestRenderAll();
 
-            tempCanvas.toCanvasElement(1, {
+            tempCanvas.toCanvasElement(exportMultiplier, {
                 width: clipPath.width,
                 height: clipPath.height,
             })
