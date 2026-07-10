@@ -4324,14 +4324,23 @@ function deleteActiveObject() {
 let bakingImage = false; // evita cliques duplos enquanto processa
 const bakedObjectUrls = []; // revogados no unmount (undo precisa deles vivos na sessão)
 
+/**
+ * Assa a REGIÃO VISÍVEL da foto (respeitando o recorte atual) com rotação ou
+ * espelhamento aplicados no pixel. Operar sobre o que está visível torna a
+ * preservação do recorte correta por construção — sem remapear coordenadas.
+ */
 async function bakeImageSource(img, { rotate90 = false, flipX = false } = {}) {
     const source = img._originalElement || img._element;
-    const srcW = source.naturalWidth || source.width;
-    const srcH = source.naturalHeight || source.height;
+
+    // Janela visível em px da fonte (recorte atual; foto inteira se não houver)
+    const cropX = img.cropX || 0;
+    const cropY = img.cropY || 0;
+    const viewW = Math.max(1, Math.round(img.width));
+    const viewH = Math.max(1, Math.round(img.height));
 
     const canvas = document.createElement('canvas');
-    canvas.width = rotate90 ? srcH : srcW;
-    canvas.height = rotate90 ? srcW : srcH;
+    canvas.width = rotate90 ? viewH : viewW;
+    canvas.height = rotate90 ? viewW : viewH;
     const ctx = canvas.getContext('2d');
 
     if (rotate90) {
@@ -4339,10 +4348,10 @@ async function bakeImageSource(img, { rotate90 = false, flipX = false } = {}) {
         ctx.translate(canvas.width, 0);
         ctx.rotate(Math.PI / 2);
     } else if (flipX) {
-        ctx.translate(srcW, 0);
+        ctx.translate(viewW, 0);
         ctx.scale(-1, 1);
     }
-    ctx.drawImage(source, 0, 0);
+    ctx.drawImage(source, cropX, cropY, viewW, viewH, 0, 0, viewW, viewH);
 
     const blob = await new Promise((resolve, reject) => {
         canvas.toBlob(
@@ -4368,25 +4377,35 @@ async function rotateMainImage() {
     bakingImage = true;
 
     try {
-        const hadCrop = (img.cropX || 0) > 0 || (img.cropY || 0) > 0 ||
-            img.width < getImageSourceSize(img).width || img.height < getImageSourceSize(img).height;
+        // Guarda pra decidir depois se re-encaixa (foto no enquadramento automático)
+        const prevW = img.width;
+        const prevH = img.height;
+        const prevScale = img.scaleX;
 
         const url = await bakeImageSource(img, { rotate90: true });
         await img.setSrc(url, { crossOrigin: 'anonymous' });
 
-        // Fonte trocou de orientação: recorte anterior não se aplica mais
-        const size = getImageSourceSize(img);
-        img.set({ cropX: 0, cropY: 0, width: size.width, height: size.height });
+        // A fonte nova JÁ é a região visível girada: recorte zerado, dimensões trocadas
+        img.set({ cropX: 0, cropY: 0, width: prevH, height: prevW });
         img.applyFilters(); // reaplica brilho/contraste na fonte nova
 
-        // Re-encaixa na metade (contain + centralizada)
+        // Mesma regra do recorte: só re-encaixa na metade se estava no enquadramento
+        // automático; foto redimensionada/movida pelo usuário mantém a escala (WYSIWYG)
         const clip = img.id === 'firstImage' ? firstClipPath.value : secondClipPath.value;
         if (clip?.width && clip?.height) {
-            const scale = Math.min(clip.width / size.width, clip.height / size.height);
-            img.set({ scaleX: scale, scaleY: scale, isManuallyMoved: false });
+            const autoFitScale = Math.min(clip.width / prevW, clip.height / prevH);
+            const estavaNoEnquadramentoAutomatico =
+                !img.isManuallyMoved &&
+                Math.abs(prevScale - autoFitScale) / autoFitScale < 0.01;
+
+            if (estavaNoEnquadramentoAutomatico) {
+                const scale = Math.min(clip.width / prevH, clip.height / prevW);
+                img.set({ scaleX: scale, scaleY: scale, isManuallyMoved: false });
+                img.setCoords();
+                await updateImagesPosition();
+            }
         }
         img.setCoords();
-        await updateImagesPosition();
 
         fabricCanvas.setActiveObject(img);
 
@@ -4400,8 +4419,6 @@ async function rotateMainImage() {
 
         fabricCanvas.requestRenderAll();
         saveCanvasState();
-
-        if (hadCrop) showToast('O recorte foi desfeito ao girar a foto.');
     } catch (error) {
         console.error('Erro ao girar a foto:', error);
         showToast('Não foi possível girar a foto. Tente novamente.');
@@ -4416,28 +4433,14 @@ async function flipMainImage() {
     bakingImage = true;
 
     try {
-        const prevCrop = {
-            cropX: img.cropX || 0,
-            cropY: img.cropY || 0,
-            width: img.width,
-            height: img.height,
-        };
+        const prevW = img.width;
+        const prevH = img.height;
 
         const url = await bakeImageSource(img, { flipX: true });
         await img.setSrc(url, { crossOrigin: 'anonymous' });
 
-        // Espelha a janela de recorte pra manter a mesma região visível (invertida)
-        const size = getImageSourceSize(img);
-        const cropX = Math.min(
-            Math.max(0, size.width - prevCrop.cropX - prevCrop.width),
-            Math.max(0, size.width - 1),
-        );
-        img.set({
-            cropX,
-            cropY: prevCrop.cropY,
-            width: prevCrop.width,
-            height: prevCrop.height,
-        });
+        // A fonte nova JÁ é a região visível espelhada: recorte zerado, dimensões iguais
+        img.set({ cropX: 0, cropY: 0, width: prevW, height: prevH });
         img.applyFilters(); // reaplica brilho/contraste na fonte nova
         img.setCoords();
 
