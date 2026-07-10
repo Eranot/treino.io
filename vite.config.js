@@ -7,7 +7,7 @@ import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [
     vue({
       template: {
@@ -19,6 +19,11 @@ export default defineConfig({
     tailwindcss(),
     vueDevTools(),
   ],
+  // Em lib mode o Vite não substitui process.env.NODE_ENV — sem isso o bundle
+  // quebra com "process is not defined" fora de bundlers que façam a substituição
+  define: command === 'build'
+    ? { 'process.env.NODE_ENV': JSON.stringify('production') }
+    : {},
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))
@@ -38,7 +43,8 @@ export default defineConfig({
       entry: path.resolve(__dirname, 'src/main.js'),
       name: 'ImageAnnotator',
       formats: ['es'],
-      fileName: (format) => `image-annotator.${format}.js`
+      fileName: (format) => `image-annotator.${format}.js`,
+      cssFileName: 'image-annotator'
     },
   }
-})
+}))

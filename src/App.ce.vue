@@ -1,14 +1,45 @@
 <template>
     <div class="relative flex flex-col items-center justify-center h-full overflow-hidden">
-        <div class="w-full absolute z-20 top-2 left-1/2 -translate-x-1/2 flex items-center justify-between px-2">
-            <div class="">
+        <!-- Barra do modo de recorte (container não captura cliques do canvas) -->
+        <div v-if="cropMode"
+            class="w-full absolute z-30 top-2 left-1/2 -translate-x-1/2 flex items-center justify-center px-2 pointer-events-none">
+            <div class="flex items-center gap-2 p-1.5 rounded-md shadow-xl bg-white pointer-events-auto">
+                <span class="hidden sm:inline text-xs px-2 text-slate-600">A área escura fica de fora do recorte</span>
+                <button @click="cancelCrop()"
+                    class="h-8 px-4 flex items-center justify-center gap-1 bg-slate-100 hover:bg-slate-200 text-black rounded text-sm transition-colors">
+                    <iconify-icon icon="mdi:close" class="inline-block"></iconify-icon>
+                    <span>Cancelar</span>
+                </button>
+                <button @click="applyCrop()"
+                    class="h-8 px-4 flex items-center justify-center gap-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-sm font-semibold transition-colors">
+                    <iconify-icon icon="iconoir:check" class="inline-block"></iconify-icon>
+                    <span>Aplicar recorte</span>
+                </button>
             </div>
-            <div class="grow flex items-center justify-center gap-4">
-                <div class="flex items-center justify-center gap-2">
-                    <div class="flex items-center gap-3 p-1.5 rounded-md shadow-xl bg-white">
-                        <div class="flex items-center justify-center gap-2">
+        </div>
+
+        <!-- Toolbar principal: quebra em linhas em telas estreitas; pr maior no mobile
+             pra não ficar embaixo do botão de fechar do app host -->
+        <div v-if="!cropMode" class="w-full absolute z-20 top-2 px-2 max-sm:pr-16 flex items-center justify-center pointer-events-none">
+            <div class="grow flex items-center justify-center">
+                <div class="flex items-center justify-center max-w-full">
+                    <div class="flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 p-1.5 rounded-md shadow-xl bg-white max-w-full pointer-events-auto">
+                        <div class="flex items-center gap-1">
+                            <div v-for="preset in ratioPresets" :key="preset.label" class="group relative">
+                                <button @click="applyRatioPreset(preset.ratio)"
+                                    class="h-8 px-2 text-xs font-medium flex items-center justify-center bg-slate-100 hover:bg-primary-500 hover:text-white text-black rounded transition-colors"
+                                    :class="{ 'bg-primary-500! text-white': isRatioActive(preset.ratio) }">
+                                    {{ preset.label }}
+                                </button>
+                                <Tooltip position="bottom" class="top-full left-1/2 -translate-x-1/2">
+                                    <span class="text-xs whitespace-nowrap">{{ preset.hint }}</span>
+                                </Tooltip>
+                            </div>
+                        </div>
+                        <div class="hidden sm:block h-6 border-r border-slate-300"></div>
+                        <div class="hidden md:flex items-center justify-center gap-2">
                             <div class="relative group">
-                                <input type="text" v-model="drawingAreaWidth" placeholder="Largura"
+                                <input type="text" v-model.lazy="drawingAreaWidth" placeholder="Largura"
                                 class="w-14 h-8 text-sm text-center border border-slate-200 rounded p-1 bg-slate-100">
                                 <Tooltip
                                     position="bottom"
@@ -19,7 +50,7 @@
                             </div>
                             <span>×</span>
                             <div class="relative group">
-                                <input type="text" v-model="drawingAreaHeight" placeholder="Altura"
+                                <input type="text" v-model.lazy="drawingAreaHeight" placeholder="Altura"
                                     class="w-14 h-8 text-sm text-center border border-slate-200 rounded p-1 bg-slate-100">
                                 <Tooltip
                                     position="bottom"
@@ -29,7 +60,7 @@
                                 </Tooltip>
                             </div>
                         </div>
-                        <div class="h-6 border-r border-slate-300"></div>
+                        <div class="hidden md:block h-6 border-r border-slate-300"></div>
                         <div class="flex items-center justify-center gap-2">
                             <div class="group relative flex items-center">
                                 <button
@@ -66,7 +97,7 @@
                             </div>
                         </div>
                         <!-- botão comparar ocultado -->
-                        <div class="h-6 border-r border-slate-300"></div>
+                        <div class="hidden sm:block h-6 border-r border-slate-300"></div>
                         <div class="flex items-center">
                             <div class="group relative">
                                 <button @click="handleDisplayModeClick('ltr')"
@@ -97,7 +128,7 @@
                                 </Tooltip>
                             </div>
                         </div>
-                        <div class="h-6 border-r border-slate-300"></div>
+                        <div class="hidden sm:block h-6 border-r border-slate-300"></div>
                         <div class="flex items-center gap-2">
                             <div class="group relative">
                                 <button @click="setActiveTool('select')"
@@ -206,9 +237,21 @@
                                     <span class="text-xs whitespace-nowrap">Texto (8)</span>
                                 </Tooltip>
                             </div>
-                            <!-- botão borracha ocultado -->
+                            <div class="group relative">
+                                <button @click="setActiveTool('hand')"
+                                    class="h-8 w-8 relative pb-1.5 flex flex-col items-center justify-center bg-slate-100 hover:bg-primary-500 hover:text-white text-black rounded transition-colors"
+                                    :class="{ 'bg-primary-500! text-white': activeTool === 'hand' }">
+                                    <iconify-icon icon="mdi:hand-back-right-outline" class="text-sm inline-block"></iconify-icon>
+                                    <span class="text-xs absolute bottom-0.5 right-1">
+                                        <small>9</small>
+                                    </span>
+                                </button>
+                                <Tooltip position="bottom" class="top-full left-1/2 -translate-x-1/2">
+                                    <span class="text-xs whitespace-nowrap">Mover a tela (9) — ou segure espaço</span>
+                                </Tooltip>
+                            </div>
                         </div>
-                        <div class="h-6 border-r border-slate-300"></div>
+                        <div class="hidden sm:block h-6 border-r border-slate-300"></div>
                         
                         <div class="group relative">
                             <button @click="toggleWatermark()"
@@ -224,31 +267,68 @@
                 </div>
             </div>
         </div>
-        <div v-if="ready"
-            class="absolute cursor-initial top-1/2 -translate-y-1/2 w-56 bg-white z-10 border border-slate-200 rounded p-4 shadow-lg text-xs transition-all duration-500 opacity-0 pointer-events-none -right-16 max-h-[80%]"
-            :class="{
-                'opacity-100! pointer-events-auto! right-2!':
-                    (
-                        (
-                            activeObject &&
-                            activeTool === 'select' &&
-                            activeObject?.id !== 'drawingArea' &&
-                            activeObject?.class !== 'resize-handle'
-                        )
-                    ) || (
-                        ['draw', 'text', 'rectangle', 'circle', 'line', 'arrow'].includes(activeTool)
-                    )
-            }">
+        <!-- Painel de propriedades: lateral no desktop, bottom sheet no celular -->
+        <div v-if="ready && !cropMode"
+            class="absolute cursor-initial bg-white z-10 border border-slate-200 shadow-lg text-xs transition-all duration-300 overflow-y-auto
+                sm:top-1/2 sm:-translate-y-1/2 sm:w-56 sm:rounded sm:p-4 sm:max-h-[80%]
+                max-sm:left-0 max-sm:right-0 max-sm:bottom-0 max-sm:top-auto max-sm:w-full max-sm:rounded-t-xl max-sm:border-b-0 max-sm:p-4 max-sm:max-h-[45%]"
+            :class="panelOpen
+                ? 'sm:right-2 max-sm:translate-y-0 opacity-100 pointer-events-auto'
+                : 'sm:-right-16 max-sm:translate-y-full opacity-0 pointer-events-none'">
             <div class="flex flex-col gap-2 border-b border-slate-200 pb-4 last:border-b-0 last:mb-0 last:pb-0">
                 <div
-                    v-if="fabricCanvas.getActiveObject()?.type == 'image'"
+                    v-if="isMainImageSelected"
+                    class="flex gap-2"
                 >
                     <button
-                        class="h-8 w-8 flex items-center justify-center border border-slate-200 rounded text-xs transition-colors hover:bg-slate-200"
-                        @click="toggleCropper()">
+                        class="h-8 px-2 flex items-center justify-center gap-1 border border-slate-200 rounded text-xs transition-colors hover:bg-slate-200"
+                        @click="enterCropMode()">
                         <iconify-icon icon="mdi:crop" class="text-base inline-block"></iconify-icon>
+                        <span>Recortar</span>
+                    </button>
+                    <button
+                        title="Girar 90°"
+                        class="h-8 w-8 flex items-center justify-center border border-slate-200 rounded text-xs transition-colors hover:bg-slate-200"
+                        @click="rotateMainImage()">
+                        <iconify-icon icon="mdi:rotate-right" class="text-base inline-block"></iconify-icon>
+                    </button>
+                    <button
+                        title="Espelhar"
+                        class="h-8 w-8 flex items-center justify-center border border-slate-200 rounded text-xs transition-colors hover:bg-slate-200"
+                        @click="flipMainImage()">
+                        <iconify-icon icon="mdi:flip-horizontal" class="text-base inline-block"></iconify-icon>
                     </button>
                 </div>
+                <template v-if="isMainImageSelected">
+                    <div class="flex flex-col gap-2 border-t border-slate-200 pt-2 mt-2">
+                        <div class="flex items-center justify-between text-xs">
+                            <div>Brilho:</div>
+                            <div>{{ Math.round(imageBrightness * 100) }}</div>
+                        </div>
+                        <input type="range"
+                            class="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer range-sm [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-[12px] [&::-webkit-slider-thumb]:w-[12px] [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary-500"
+                            min="-0.4" max="0.4" step="0.02" v-model.number="imageBrightness">
+                        <div class="flex items-center justify-between text-xs">
+                            <div>Contraste:</div>
+                            <div>{{ Math.round(imageContrast * 100) }}</div>
+                        </div>
+                        <input type="range"
+                            class="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer range-sm [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-[12px] [&::-webkit-slider-thumb]:w-[12px] [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary-500"
+                            min="-0.5" max="0.5" step="0.02" v-model.number="imageContrast">
+                        <div class="flex items-center justify-between text-xs">
+                            <div>Opacidade:</div>
+                            <div>{{ Math.round(objectOpacity * 100) }}%</div>
+                        </div>
+                        <input type="range"
+                            class="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer range-sm [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-[12px] [&::-webkit-slider-thumb]:w-[12px] [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary-500"
+                            min="0" max="1" step="0.05" v-model="objectOpacity">
+                        <button v-if="imageBrightness !== 0 || imageContrast !== 0 || parseFloat(objectOpacity) < 1"
+                            class="h-7 w-full flex items-center justify-center border border-slate-200 rounded text-xs transition-colors hover:bg-slate-200"
+                            @click="resetImageAdjustments()">
+                            Resetar ajustes
+                        </button>
+                    </div>
+                </template>
                 <div
                     v-if="activeObject && activeObject.id !== 'firstImage' && activeObject.id !== 'secondImage'"
                     class="flex justify-end gap-2"
@@ -304,11 +384,12 @@
                         </div>
                     </div>
                 </div>
-                <div
+                <!-- Pras fotos principais a opacidade mora junto de brilho/contraste -->
+                <div v-if="!isMainImageSelected"
                     class="flex flex-col gap-2 border-b border-slate-200 pb-2 mb-2 last:border-b-0 last:mb-0 last:pb-0">
                     <div class="flex items-center justify-between text-xs">
                         <div>Opacidade:</div>
-                        <div>{{ objectOpacity * 100 }}%</div>
+                        <div>{{ Math.round(objectOpacity * 100) }}%</div>
                     </div>
                     <div class="">
                         <input type="range"
@@ -381,10 +462,7 @@
                         <div>{{ lineStrokeColor }}</div>
                     </div>
                     <div class="flex flex-col gap-2">
-                        <ColorSelector
-                            v-model="lineStrokeColor"
-                            @close="closeColorPicker"
-                        />
+                        <ColorSelector v-model="lineStrokeColor" />
                     </div>
                 </div>
             </template>
@@ -402,7 +480,7 @@
                         <div>{{ fillColor }}</div>
                     </div>
                     <div class="flex flex-col gap-2">
-                        <ColorSelector v-model="fillColor" @close="closeColorPicker" />
+                        <ColorSelector v-model="fillColor" />
                     </div>
                 </div>
             </template>
@@ -434,7 +512,18 @@
                         <div>{{ textColor }}</div>
                     </div>
                     <div class="flex flex-col gap-2">
-                        <ColorSelector v-model="textColor" @close="closeColorPicker" />
+                        <ColorSelector v-model="textColor" />
+                    </div>
+                </div>
+
+                <div
+                    class="flex flex-col gap-2 border-b border-slate-200 pb-2 mb-2 last:border-b-0 last:mb-0 last:pb-0">
+                    <div class="flex items-center justify-between text-xs">
+                        <div>Fundo do texto:</div>
+                        <div>{{ textBgColor ? textBgColor : 'sem fundo' }}</div>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <ColorSelector v-model="textBgColor" />
                     </div>
                 </div>
 
@@ -509,7 +598,7 @@
                 </div>
             </template>
         </div>
-        <div class="grow flex items-center justify-center w-full bg-[url(@/assets/image.png)] bg-size-[800px]">
+        <div class="grow flex items-center justify-center w-full canvas-backdrop">
             <div ref="canvasContainer" class="max-h-full overflow-auto w-full h-full flex items-center justify-center">
                 <div ref="canvasWrapper" class="relative w-full h-full">
                     <canvas ref="canvasEl"></canvas>
@@ -521,7 +610,7 @@
                             <div>
                             </div>
                         </div>
-                        <div class="flex items-center justify-center gap-4">
+                        <div v-if="!cropMode" class="flex items-center justify-center gap-4">
                             <div class="flex items-center justify-center pointer-events-auto">
                                 <button @click="undo()" :disabled="undoStack.length <= 1"
                                     class="h-8 w-8 bg-slate-200 flex items-center justify-center border-2 border-r-0 border-slate-300 hover:bg-primary-500 hover:text-white text-black rounded-l-lg transition-colors">
@@ -538,43 +627,46 @@
             </div>
         </div>
         
-        <!-- Botão Finalizar fixo no canto inferior direito -->
-        <button @click="finishDrawing()"
+        <!-- Carregando as fotos -->
+        <div v-if="loadingImages"
+            class="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-slate-100/90">
+            <div class="w-10 h-10 border-4 border-slate-300 border-t-primary-500 rounded-full animate-spin"></div>
+            <span class="text-sm text-slate-600">Carregando as fotos...</span>
+        </div>
+
+        <!-- Falha ao carregar as fotos -->
+        <div v-else-if="loadError"
+            class="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-slate-100">
+            <iconify-icon icon="mdi:image-broken-variant" class="text-4xl text-slate-400"></iconify-icon>
+            <span class="text-sm text-slate-600 text-center px-6">Não foi possível carregar as fotos. Verifique sua conexão e tente novamente.</span>
+            <button @click="bootstrapEditor()"
+                class="h-9 px-5 bg-primary-500 hover:bg-primary-600 text-white rounded text-sm font-semibold transition-colors">
+                Tentar novamente
+            </button>
+        </div>
+
+        <!-- Toast de feedback -->
+        <Transition name="fade">
+            <div v-if="toastMessage"
+                class="absolute bottom-20 left-1/2 -translate-x-1/2 z-[70] bg-slate-800 text-white text-sm px-4 py-2 rounded-lg shadow-lg pointer-events-none max-w-[90%] text-center">
+                {{ toastMessage }}
+            </div>
+        </Transition>
+
+        <!-- Botão Finalizar fixo no canto inferior direito (some quando o bottom sheet mobile está aberto) -->
+        <button v-if="!cropMode && !loadingImages && !loadError" @click="finishDrawing()"
+            :class="{ 'max-sm:hidden': panelOpen }"
             class="fixed bottom-6 right-6 z-50 h-10 px-8 pointer-events-auto flex items-center justify-center bg-emerald-500 hover:bg-emerald-600 text-white rounded font-semibold transition-colors cursor-pointer shadow-lg">
             <iconify-icon icon="iconoir:check" class="text-2xl inline-block"></iconify-icon>
             <span class="ml-3">Finalizar</span>
         </button>
 
-        <!-- Modal de Comparação -->
-        <Dialog 
-            :is-visible="showCompareModal"
-            dialog-id="compare"
-            title="Comparar Imagens"
-            @close="showCompareModal = false"
-        >
-            <Compare
-                :images-to-compare="imagesToCompare"
-            />
-        </Dialog>
-        <Dialog 
-            :is-visible="showCropperModal"
-            dialog-id="crop"
-            title="Cortar Imagem"
-            @close="showCropperModal = false"
-            >
-            <Cropper
-                :image="imageToCrop"
-                @image-cropped="applyCroppedImage"
-            />
-        </Dialog>
     </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, computed, nextTick, defineAsyncComponent } from 'vue';
-import { Canvas, FabricImage, Rect, PencilBrush, Path, IText, Circle, Triangle, Polyline, Point, util } from 'fabric'
-
-import { EraserBrush, ClippingGroup } from '@erase2d/fabric';
+import { ref, shallowRef, onMounted, onUnmounted, watch, computed, nextTick } from 'vue';
+import { Canvas, FabricImage, Rect, PencilBrush, Path, IText, Circle, Triangle, Polyline, Point, filters, ActiveSelection, util } from 'fabric'
 
 import { applyStyleToControls } from '@/composables/useControls.js';
 
@@ -583,9 +675,6 @@ const commonStore = useCommonStore();
 
 import ColorSelector from '@/components/ColorSelector.vue';
 import Tooltip from '@/components/Tooltip.vue';
-import Dialog from '@/components/Dialog.vue';
-import Compare from '@/components/Compare.vue';
-import Cropper from '@/components/Cropper.vue';
 
 // import { useRangeInput } from '@/composables/useRangeInput.js';
 // const rangeInput = useRangeInput();
@@ -608,7 +697,7 @@ const props = defineProps({
         required: true,
     },
     logoSettings: {
-        type: Object,
+        type: [Object, String], // via atributo HTML chega como string JSON
         required: false,
         default: () => ({
             url: '/logo-comprido-escuro.png',
@@ -623,19 +712,27 @@ const emit = defineEmits(['finished']);
 
 const ready = ref(false);
 const finishing = ref(false);
+const loadingImages = ref(true);
+const loadError = ref(false);
+
+// Toast de feedback (substitui alert(), que trava a UI e destoa do editor)
+const toastMessage = ref('');
+let toastTimeout = null;
+function showToast(message, duration = 4000) {
+    toastMessage.value = message;
+    if (toastTimeout) clearTimeout(toastTimeout);
+    toastTimeout = setTimeout(() => {
+        toastMessage.value = '';
+    }, duration);
+}
 const altKeyPressed = ref(false);
-const showCompareModal = ref(false);
-const showCropperModal = ref(false);
 
 // URLs de dados para comparação de imagens
-const img1DataUrl = ref('');
-const img2DataUrl = ref('');
 
 // Variáveis para pan com botão direito
 const isPanning = ref(false);
 const lastPanPoint = ref({ x: 0, y: 0 });
 
-const eraser = ref(null);
 
 // Variáveis para zoom suave com mouse wheel (removidas se não usadas)
 
@@ -651,32 +748,36 @@ const canvasEl = ref(null);
 let fabricCanvas = null
 
 const showWatermark = ref(false);
-const watermark = ref(null);
 
-const firstImage = ref(null);
-const firstClipPath = ref(null);
-const secondImage = ref(null);
-const secondClipPath = ref(null);
-const drawingArea = ref(null); // Área de desenho (retângulo transparente)
+// IMPORTANTE: objetos do Fabric ficam em shallowRef. ref() normal envolve o objeto
+// num Proxy reativo profundo, e o proxy != objeto cru: passar o proxy de volta pro
+// Fabric quebra o indexOf da coleção — sendObjectToBack/bringObjectToFront do v6 dão
+// unshift/push incondicional e INSEREM o proxy como um objeto novo (foto duplicada,
+// era o bug fantasma do Finalizar). shallowRef também elimina o overhead de proxy
+// em todo acesso durante o render do canvas.
+const watermark = shallowRef(null);
+const firstImage = shallowRef(null);
+const firstClipPath = shallowRef(null);
+const secondImage = shallowRef(null);
+const secondClipPath = shallowRef(null);
+const drawingArea = shallowRef(null); // Área de desenho (retângulo transparente)
 const zoomLevel = ref(1);
 const maxZoom = ref(4.5);
 const minZoom = ref(0.3);
 let isSwitchingDisplayMode = false;
 
-const imagesToCompare = ref({
-    first: null,
-    second: null,
-});
-const imageToCrop = ref(null);
+// Estado do recorte inline
+const cropMode = ref(false);
+let cropTarget = null;          // FabricImage sendo recortada
+let cropRect = null;            // retângulo de seleção do recorte
+let cropOverlay = null;         // véu escuro sobre a área descartada
+let cropPrev = null;            // snapshot pra cancelar/restaurar
+let cropInteractivityPrev = []; // interatividade dos demais objetos
 
 const drawingAreaWidth = ref(0);
 const drawingAreaHeight = ref(0);
 
-// Fator de escala aplicado ao carregar as imagens para caber no container.
-// Usado na exportação para restaurar a resolução original (evita baixa qualidade no celular).
-const fitScale = ref(1);
-
-const activeObject = ref();
+const activeObject = shallowRef(); // objeto do Fabric — ver nota do shallowRef acima
 const objectScaleX = ref(1);
 const objectScaleY = ref(1);
 const objectUniformScale = ref(true); // Escala uniforme (X e Y juntos)
@@ -692,7 +793,12 @@ let isRestoring = false; // Flag para evitar que o estado seja salvo durante uma
 let isDrawingAreaUpdating = false; // Flag para evitar loops entre input e redimensionamento manual
 
 const displayMode = ref('ltr'); // 'ltr' (left-to-right) ou 'ttb' (top-to-bottom)
-const activeTool = ref(); // Ferramenta ativa (ex: 'draw', 'select', etc.)
+const activeTool = ref(); // Ferramenta ativa (ex: 'draw', 'select', 'hand', etc.)
+let spacePanPrevTool = null; // ferramenta a restaurar quando soltar o espaço (mão temporária)
+let spacePanPrevSelection = null; // seleção a restaurar quando soltar o espaço
+
+// Clipboard interno de objetos (Cmd/Ctrl+C/V/X) — as fotos principais ficam de fora
+let objectClipboard = [];
 
 const baseStrokeWidth = ref(1); // Largura base do pincel
 const objectStrokeWidthMultiplier = ref(4); // Multiplicador da largura do pincel
@@ -701,9 +807,17 @@ const objectStrokeWidthMultiplier = ref(4); // Multiplicador da largura do pince
 const textFontSize = ref(24); // Tamanho da fonte
 const textFontFamily = ref('Arial'); // Família da fonte
 const textColor = ref('#000000'); // Cor do texto
+const textBgColor = ref(''); // Fundo do texto (tarja de legibilidade); '' = sem fundo
 const textIsBold = ref(false); // Texto em negrito
 const textIsItalic = ref(false); // Texto em itálico
 const textIsUnderline = ref(false); // Texto sublinhado
+let syncingTextRefs = false; // evita re-aplicar valores enquanto o painel sincroniza com o texto selecionado
+
+// Ajustes de imagem (fotos antes/depois costumam ter iluminação diferente)
+const imageBrightness = ref(0); // -0.4 .. 0.4
+const imageContrast = ref(0);   // -0.5 .. 0.5
+let syncingImageAdjust = false;
+let imageAdjustTimeout = null;
 
 const handlersColor = '#d1d5d9';
 const handlersColorOver = '#c0c4c8';
@@ -737,38 +851,13 @@ onMounted(async () => {
         fireRightClick: true,  // Habilita eventos de clique direito
         fireMiddleClick: true, // Habilita eventos de clique do meio
         stopContextMenu: true, // Impede o menu de contexto padrão
+        targetFindTolerance: 8, // Facilita acertar linhas finas e traços (mouse e dedo)
     });
 
     window.fabricCanvas = fabricCanvas;
 
-    eraser.value = new EraserBrush(fabricCanvas);
-    eraser.value.width = 30;
-    eraser.value.on('start', (e) => {
-        console.log('e', e);
-
-    });
-
-    eraser.value.on('end', async (e) => {
-        e.preventDefault();
-
-        const { path, targets } = e.detail;
-        // const isErased = targets.includes(circle);
-
-        // const pathPerObjectMap = await eraser.value.commit({ path, targets });
-
-        // const committedEraser = circle.clipPath instanceof ClippingGroup;
-    });
-
     // Configurar eventos do Fabric.js
     setupFabricEvents();
-
-    // Chama a função para carregar as imagens.
-    await loadImages();
-    await adjustCanvasSize();
-    await addClipPaths();
-
-    // Adiciona listener para redimensionamento da janela
-    window.addEventListener('resize', adjustCanvasSize);
 
     // Configura os atalhos de teclado para Undo/Redo
     setupKeyboardShortcuts();
@@ -776,34 +865,54 @@ onMounted(async () => {
     // Configura os listeners para salvar o estado do canvas
     setupCanvasStateListeners();
 
-    addWatermark();
-    // Ativa a ferramenta de seleção por padrão
-    activateSelectionMode();
-    addDrawingAreaHandlers();
+    // Adiciona listener para redimensionamento da janela
+    window.addEventListener('resize', adjustCanvasSize);
 
-    // const arrow = new Arrow({
-    //     x1: 50,
-    //     y1: 50,
-    //     x2: 90,
-    //     y2: 90,
-    //     stroke: 'blue',
-    //     strokeWidth: 3,
-    //     selectable: true,
-    // });
-    // fabricCanvas.add(arrow);
-
-    // Salva o estado inicial do canvas após tudo estar configurado
-    setTimeout(() => {
-        saveCanvasState();
-        ready.value = true;
-    }, 500);
+    await bootstrapEditor();
 });
+
+/**
+ * Carrega as fotos e monta a cena. Isolado do onMounted pra permitir "tentar
+ * novamente" quando o download falhar (rede/S3), com feedback visual.
+ */
+async function bootstrapEditor() {
+    loadingImages.value = true;
+    loadError.value = false;
+
+    // Retry: remove restos de uma tentativa anterior
+    fabricCanvas.getObjects()
+        .filter((o) => o.id === 'firstImage' || o.id === 'secondImage')
+        .forEach((o) => fabricCanvas.remove(o));
+
+    try {
+        await loadImages();
+        await adjustCanvasSize();
+        await addClipPaths();
+
+        addWatermark();
+        // Ativa a ferramenta de seleção por padrão
+        activateSelectionMode();
+        addDrawingAreaHandlers();
+
+        // Salva o estado inicial do canvas após tudo estar configurado
+        setTimeout(() => {
+            saveCanvasState();
+            ready.value = true;
+        }, 500);
+    } catch (error) {
+        console.error('Erro ao carregar as fotos da comparação:', error);
+        loadError.value = true;
+    } finally {
+        loadingImages.value = false;
+    }
+}
 
 // Limpa o listener quando o componente for desmontado
 onUnmounted(() => {
     window.removeEventListener('resize', adjustCanvasSize);
     document.removeEventListener('keydown', handleKeyDown);
     document.removeEventListener('keyup', handleKeyUp);
+    bakedObjectUrls.forEach((url) => URL.revokeObjectURL(url));
 });
 
 watch(displayMode, async (newMode, oldMode) => {
@@ -824,6 +933,33 @@ watch(activeObject, (newObj) => {
         objectScaleX.value = parseFloat(newObj.scaleX?.toFixed(2));
         objectScaleY.value = parseFloat(newObj.scaleY?.toFixed(2));
         objectOpacity.value = parseFloat(newObj?.opacity)?.toFixed(2);
+
+        // Sliders de ajuste refletem os filtros da foto selecionada
+        if (newObj.type === 'image' && (newObj.id === 'firstImage' || newObj.id === 'secondImage')) {
+            syncingImageAdjust = true;
+            const brightnessFilter = newObj.filters?.find((f) => f instanceof filters.Brightness);
+            const contrastFilter = newObj.filters?.find((f) => f instanceof filters.Contrast);
+            imageBrightness.value = brightnessFilter ? brightnessFilter.brightness : 0;
+            imageContrast.value = contrastFilter ? contrastFilter.contrast : 0;
+            nextTick(() => {
+                syncingImageAdjust = false;
+            });
+        }
+
+        // Painel de texto passa a refletir o texto selecionado
+        if (newObj.type === 'i-text') {
+            syncingTextRefs = true;
+            textFontSize.value = newObj.fontSize;
+            textFontFamily.value = newObj.fontFamily;
+            textColor.value = newObj.fill;
+            textBgColor.value = newObj.textBackgroundColor || '';
+            textIsBold.value = newObj.fontWeight === 'bold';
+            textIsItalic.value = newObj.fontStyle === 'italic';
+            textIsUnderline.value = !!newObj.underline;
+            nextTick(() => {
+                syncingTextRefs = false;
+            });
+        }
     }
 });
 
@@ -916,63 +1052,60 @@ watch(() => lineStrokeColor.value, (newColor) => {
     fabricCanvas.renderAll();
 });
 
-watch(textFontSize, (newSize) => {
+// Zera todos os ajustes da foto (brilho, contraste e opacidade)
+function resetImageAdjustments() {
+    imageBrightness.value = 0;
+    imageContrast.value = 0;
+    objectOpacity.value = 1;
+}
 
-    if (activeObject.value && activeObject.value.type === 'i-text') {
-        activeObject.value.set({
-            fontSize: newSize
-        });
-        fabricCanvas.requestRenderAll();
-        saveCanvasState();
-    }
+// Aplica brilho/contraste na foto selecionada (com throttle: filtrar foto grande é caro)
+function applyImageAdjustments() {
+    const img = getActiveMainImage();
+    if (!img) return;
+
+    const brightness = parseFloat(imageBrightness.value) || 0;
+    const contrast = parseFloat(imageContrast.value) || 0;
+
+    const filterList = [];
+    if (brightness !== 0) filterList.push(new filters.Brightness({ brightness }));
+    if (contrast !== 0) filterList.push(new filters.Contrast({ contrast }));
+
+    img.filters = filterList;
+    img.applyFilters();
+    fabricCanvas.requestRenderAll();
+    saveCanvasState();
+}
+
+watch([imageBrightness, imageContrast], () => {
+    if (syncingImageAdjust) return;
+    if (imageAdjustTimeout) clearTimeout(imageAdjustTimeout);
+    imageAdjustTimeout = setTimeout(applyImageAdjustments, 60);
 });
 
-watch(textFontFamily, (newFamily) => {
+// Aplica uma propriedade ao texto selecionado (ignora durante a sincronização do painel)
+function applyTextProp(props) {
+    if (syncingTextRefs) return;
     if (activeObject.value && activeObject.value.type === 'i-text') {
-        activeObject.value.set({
-            fontFamily: newFamily
-        });
+        activeObject.value.set(props);
         fabricCanvas.requestRenderAll();
         saveCanvasState();
     }
-});
+}
 
-watch(textColor, (newColor) => {
-    if (activeObject.value && activeObject.value.type === 'i-text') {
-        activeObject.value.set({
-            fill: newColor
-        });
-        fabricCanvas.requestRenderAll();
-        saveCanvasState();
-    }
+watch(textFontSize, (newSize) => applyTextProp({ fontSize: newSize }));
+watch(textFontFamily, (newFamily) => applyTextProp({ fontFamily: newFamily }));
+watch(textColor, (newColor) => applyTextProp({ fill: newColor }));
+watch(textBgColor, (newColor) => {
+    // alpha 00 (botão transparente) significa "sem fundo"
+    const value = newColor && !(newColor.length === 9 && newColor.toUpperCase().endsWith('00'))
+        ? newColor
+        : '';
+    applyTextProp({ textBackgroundColor: value });
 });
-watch(textIsBold, (isBold) => {
-    if (activeObject.value && activeObject.value.type === 'i-text') {
-        activeObject.value.set({
-            fontWeight: isBold ? 'bold' : 'normal'
-        });
-        fabricCanvas.requestRenderAll();
-        saveCanvasState();
-    }
-});
-watch(textIsItalic, (isItalic) => {
-    if (activeObject.value && activeObject.value.type === 'i-text') {
-        activeObject.value.set({
-            fontStyle: isItalic ? 'italic' : 'normal'
-        });
-        fabricCanvas.requestRenderAll();
-        saveCanvasState();
-    }
-});
-watch(textIsUnderline, (isUnderline) => {
-    if (activeObject.value && activeObject.value.type === 'i-text') {
-        activeObject.value.set({
-            underline: isUnderline
-        });
-        fabricCanvas.requestRenderAll();
-        saveCanvasState();
-    }
-});
+watch(textIsBold, (isBold) => applyTextProp({ fontWeight: isBold ? 'bold' : 'normal' }));
+watch(textIsItalic, (isItalic) => applyTextProp({ fontStyle: isItalic ? 'italic' : 'normal' }));
+watch(textIsUnderline, (isUnderline) => applyTextProp({ underline: isUnderline }));
 
 watch(fillColor, (newColor) => {
 
@@ -987,6 +1120,26 @@ watch(fillColor, (newColor) => {
     }
 });
 
+
+// Painel de propriedades aberto: objeto editável selecionado ou ferramenta de criação ativa
+const panelOpen = computed(() => {
+    if (
+        activeObject.value &&
+        activeTool.value === 'select' &&
+        activeObject.value?.id !== 'drawingArea' &&
+        activeObject.value?.class !== 'resize-handle' &&
+        activeObject.value?.class !== 'crop-chrome'
+    ) {
+        return true;
+    }
+    return ['draw', 'text', 'rectangle', 'circle', 'triangle', 'line', 'arrow'].includes(activeTool.value);
+});
+
+// Foto principal (antes/depois) selecionada
+const isMainImageSelected = computed(() =>
+    activeObject.value?.type === 'image' &&
+    (activeObject.value?.id === 'firstImage' || activeObject.value?.id === 'secondImage'),
+);
 
 const logoSettings = computed(() => {
     if (typeof props.logoSettings === 'string') {
@@ -1008,91 +1161,15 @@ const logoSettings = computed(() => {
 
 // 4. FUNÇÕES PRINCIPAIS
 
-async function applyCroppedImage(croppedImageData) {
-    const dataURL = croppedImageData.dataURL;
-
-    if (!dataURL || !imageToCrop.value) return;
-
-    const id = imageToCrop.value.id;
-    const image = fabricCanvas.getObjects().find(obj => obj.id === id);
-    if (!image) return;    
-
-    // Store current visual properties to maintain appearance
-    const currentLeft = image.left;
-    const currentTop = image.top;
-
-    try {
-        // In FabricJS v6, setSrc returns a Promise
-        await image.setSrc(dataURL, { crossOrigin: 'anonymous' });
-        
-        // After the new image loads, adjust scale to maintain visual size
-        // The new image has the cropped dimensions, so we need to scale it
-        // to match the previous visual size if that's desired behavior
-        
-        // Option 1: Maintain the same visual size (scale to fit previous size)
-        // const newScaleX = currentScaledWidth / croppedWidth;
-        // const newScaleY = currentScaledHeight / croppedHeight;
-        
-        // Option 2: Keep original scale (cropped image might appear smaller/larger)
-        // Comment out the lines above and uncomment below to use original scale:
-        const newScaleX = image.scaleX;
-        const newScaleY = image.scaleY;
-        
-        image.set({
-            scaleX: newScaleX,
-            scaleY: newScaleY,
-            left: currentLeft,
-            top: currentTop
-        });
-
-        image.setCoords();
-        
-        const newRatio = image.getScaledWidth() / image.getScaledHeight();
-        const da = drawingArea.value;
-        let daRatio;
-
-        if(displayMode.value === 'ltr'){
-            daRatio = (da.width / 2) / da.height;
-        } else {
-            daRatio = da.width / (da.height / 2);
-        }
-        
-        if(newRatio > daRatio) {
-            objectScaleX.value = ((da.width / ( displayMode.value === 'ltr' ? 2 : 1)) / image.width);
-            objectScaleY.value = objectScaleX.value;
-        } else {
-            objectScaleY.value = (da.height / ( displayMode.value === 'ltr' ? 1 : 2)) / image.height;
-            objectScaleX.value = objectScaleY.value;
-        }     
-
-        image.set({
-            scaleX: objectScaleX.value,
-            scaleY: objectScaleY.value,
-        });
-        
-        image.setCoords();
-        fabricCanvas.requestRenderAll();
-        saveCanvasState();
-        
-        imageToCrop.value = null;
-        showCropperModal.value = false;
-        
-        console.log('Image successfully replaced with cropped version');
-    } catch (error) {
-        console.error('Error applying cropped image:', error);
-        // Optionally show user feedback about the error
-        alert('Erro ao aplicar a imagem cortada. Tente novamente.');
-    }
-}
-
 async function switchDisplayMode(newMode, options = {}) {
     const { skipSave = false, force = false } = options;
 
     const zoomAtStart = fabricCanvas.getZoom();
-    console.log('🔄 switchDisplayMode:', newMode, '| skipSave:', skipSave, '| zoom at start:', Math.round(zoomAtStart * 100) + '%');
 
     if (!force && isSwitchingDisplayMode) return;
     if (!force && isRestoring) return;
+
+    if (cropMode.value) cancelCrop();
 
     isSwitchingDisplayMode = true;
     try {
@@ -1107,7 +1184,6 @@ async function switchDisplayMode(newMode, options = {}) {
 
         const ready = await ensureDisplayModeDependenciesReady();
         if (!ready) {
-            console.warn('⚠️ Display mode switch skipped: canvas not ready');
             return;
         }
 
@@ -1128,15 +1204,12 @@ async function switchDisplayMode(newMode, options = {}) {
         await nextTick();
         
         const beforeHandlersAdd = fabricCanvas.getObjects().filter(o => o.class === 'resize-handle').length;
-        console.log('📍 Before addDrawingAreaHandlers:', beforeHandlersAdd, 'handlers');
         
         await addDrawingAreaHandlers();
 
         const afterHandlersAdd = fabricCanvas.getObjects().filter(o => o.class === 'resize-handle').length;
-        console.log('📍 After addDrawingAreaHandlers:', afterHandlersAdd, 'handlers');
         
         if (!skipSave) {
-            console.log('📐 Calling fitToCanvas (skipDrawingAreaUpdate=true)');
             await fitToCanvas(false, true);
             if (newMode === 'ttb') {
                 await ensureDrawingAreaVisible();
@@ -1155,7 +1228,6 @@ async function switchDisplayMode(newMode, options = {}) {
 
         const finalHandlerCount = fabricCanvas.getObjects().filter(o => o.class === 'resize-handle').length;
         const finalZoom = fabricCanvas.getZoom();
-        console.log('✅ switchDisplayMode END:', finalHandlerCount, 'handlers | zoom:', Math.round(finalZoom * 100) + '% | zoomLevel.value:', Math.round(zoomLevel.value * 100) + '%');
     } finally {
         isSwitchingDisplayMode = false;
     }
@@ -1181,7 +1253,6 @@ async function ensureDisplayModeDependenciesReady(timeout = 1000, interval = 50)
 
 async function handleDisplayModeClick(mode) {
     const currentZoomAtClick = fabricCanvas.getZoom();
-    console.log('🖱️ Click:', mode, '(current:', displayMode.value + ') | zoom before click:', Math.round(currentZoomAtClick * 100) + '% | zoomLevel.value:', Math.round(zoomLevel.value * 100) + '%');
     
     if (isRestoring) return;
 
@@ -1219,7 +1290,6 @@ async function addDrawingArea() {
     if (!firstClipPath.value || !secondClipPath.value) return;
 
     const handlersBeforeDA = fabricCanvas.getObjects().filter(o => o.class === 'resize-handle');
-    console.log('🏗️ addDrawingArea: handlers before:', handlersBeforeDA.length);
 
     // SEMPRE remove todos os handlers antes de criar novo drawingArea
     if (handlersBeforeDA.length > 0) {
@@ -1259,8 +1329,6 @@ async function addDrawingArea() {
         height: dah,
         fill: 'white', // Fundo branco para a área de desenho
         stroke: 'oklch(67.72% 0.103 40.38)', // Cor da borda azul
-        borderColor: 'oklch(67.72% 0.103 40.38)',
-        cornerColor: 'orange',
         strokeWidth: 0,
         strokeUniform: true,
         selectable: false,
@@ -1287,8 +1355,8 @@ async function addDrawingArea() {
     });
 
     drawingArea.value = drawingAreaRect;
-    drawingAreaWidth.value = daw;
-    drawingAreaHeight.value = dah;
+    drawingAreaWidth.value = Math.round(daw);
+    drawingAreaHeight.value = Math.round(dah);
 
     // Adiciona ao canvas
     fabricCanvas.add(drawingAreaRect);
@@ -1353,7 +1421,6 @@ async function addDrawingArea() {
     fabricCanvas.requestRenderAll();
     
     const handlersAfterDA = fabricCanvas.getObjects().filter(o => o.class === 'resize-handle');
-    console.log('🏗️ addDrawingArea: handlers after:', handlersAfterDA.length);
 }
 
 /**
@@ -1479,6 +1546,45 @@ async function updateImagesPosition(oldSize = null) {
     fabricCanvas.requestRenderAll();
 }
 
+// Presets de proporção da imagem final (formatos de post do Instagram)
+const ratioPresets = [
+    { label: '1:1', ratio: 1, hint: 'Quadrado (feed)' },
+    { label: '4:5', ratio: 4 / 5, hint: 'Retrato (feed)' },
+    { label: '9:16', ratio: 9 / 16, hint: 'Story / Reels' },
+];
+
+function isRatioActive(ratio) {
+    const w = Number(drawingAreaWidth.value);
+    const h = Number(drawingAreaHeight.value);
+    if (!w || !h) return false;
+    return Math.abs(w / h - ratio) / ratio < 0.01;
+}
+
+/**
+ * Aplica uma proporção pré-definida mantendo a largura atual da área;
+ * os clips/imagens acompanham pelo watcher de dimensões.
+ */
+async function applyRatioPreset(ratio) {
+    if (!drawingArea.value || cropMode.value) return;
+
+    const da = drawingArea.value;
+    const width = Math.round(da.width);
+    const height = Math.round(width / ratio);
+
+    drawingAreaWidth.value = width;
+    drawingAreaHeight.value = height;
+
+    await nextTick();
+
+    // Enquadra a nova área na tela (story fica bem mais alto que o canvas)
+    fitViewportToBounds({
+        left: da.left - width / 2,
+        top: da.top - height / 2,
+        width,
+        height,
+    }, 0.9, 56);
+}
+
 /**
  * Atualiza as dimensões da área de desenho baseado nos inputs do usuário
  */
@@ -1512,21 +1618,48 @@ async function updateDrawingAreaDimensions(oldValues, newValues) {
 
     // Redimensiona os clipPaths para seguir o drawingArea
     await updateClipPathsSize();
-    
+
     // Atualiza a posição das imagens com base no tamanho anterior
     await updateImagesPosition(oldSize);
 
     // Atualiza a posição da watermark
     updateWatermarkPosition();
 
+    // Reposiciona os handles nas novas bordas da área
+    addDrawingAreaHandlers();
+
     isDrawingAreaUpdating = false;
 }
 
 /**
- * Salva o estado atual do canvas no histórico (undo stack).
+ * Salva o estado do canvas no histórico com debounce: rajadas de eventos
+ * (arrastar slider de opacidade, mover objeto) viram UM estado, não dezenas.
  */
+let saveStateTimeout = null;
+
 function saveCanvasState() {
-    if (isRestoring) return; // Não salva se estiver restaurando um estado
+    if (isRestoring) return;
+    // Durante o recorte a imagem fica temporariamente expandida e sem clip;
+    // salvar esse estado intermediário poluiria o undo
+    if (cropMode.value) return;
+    if (saveStateTimeout) clearTimeout(saveStateTimeout);
+    saveStateTimeout = setTimeout(saveCanvasStateNow, 300);
+}
+
+/**
+ * Garante que um salvamento pendente aconteça antes de undo/redo lerem a pilha.
+ */
+function flushPendingCanvasState() {
+    if (saveStateTimeout) {
+        clearTimeout(saveStateTimeout);
+        saveStateTimeout = null;
+        saveCanvasStateNow();
+    }
+}
+
+function saveCanvasStateNow() {
+    saveStateTimeout = null;
+    if (isRestoring || cropMode.value) return; // Não salva durante restore ou recorte
 
     // Limpa a pilha de refazer (redo stack) sempre que uma nova ação é feita
     redoStack.value = [];
@@ -1546,18 +1679,16 @@ function saveCanvasState() {
         'selectable',
         'evented',
         'absolutePositioned',
-        'isManuallyMoved'
+        'isManuallyMoved',
+        'cropX',
+        'cropY'
     ]);
 
-    // Remove handlers do estado salvo para evitar duplicação no restore
+    // Remove cromo do editor do estado salvo para evitar duplicação no restore
     if (canvasState.objects) {
-        const originalCount = canvasState.objects.length;
-        canvasState.objects = canvasState.objects.filter(obj => obj.class !== 'resize-handle');
-        const filteredCount = canvasState.objects.length;
-        const filtered = originalCount - filteredCount;
-        if (filtered > 0) {
-            console.log('💾 saveCanvasState: filtered', filtered, 'handlers from state');
-        }
+        canvasState.objects = canvasState.objects.filter(
+            obj => obj.class !== 'resize-handle' && obj.class !== 'crop-chrome'
+        );
     }
 
     const state = JSON.stringify({
@@ -1579,6 +1710,8 @@ function saveCanvasState() {
  * Desfaz a última ação (Ctrl+Z).
  */
 async function undo() {
+    if (cropMode.value) cancelCrop();
+    flushPendingCanvasState();
     if (undoStack.value.length <= 1) return; // Mantém o estado inicial na pilha
 
     // Move o estado atual da pilha de desfazer para a de refazer
@@ -1596,6 +1729,8 @@ async function undo() {
  * Refaz a última ação desfeita (Ctrl+Shift+Z).
  */
 async function redo() {
+    if (cropMode.value) cancelCrop();
+    flushPendingCanvasState();
     if (redoStack.value.length === 0) return;
 
     // Move o estado da pilha de refazer de volta para a de desfazer
@@ -1610,7 +1745,6 @@ async function redo() {
  * Restaura o canvas a partir de um objeto de estado JSON.
  */
 async function restoreCanvasState(state) {
-    console.log('🔙 UNDO/REDO START');
     isRestoring = true;
 
     let restoredDisplayMode = null;
@@ -1630,7 +1764,6 @@ async function restoreCanvasState(state) {
         await fabricCanvas.loadFromJSON(canvasState);
 
         const handlersAfterLoad = fabricCanvas.getObjects().filter(o => o.class === 'resize-handle');
-        console.log('🔙 After loadFromJSON:', handlersAfterLoad.length, 'handlers');
 
         fabricCanvas.setZoom(currentZoom);
         fabricCanvas.viewportTransform = currentViewportTransform;
@@ -1660,6 +1793,11 @@ async function restoreCanvasState(state) {
         if (secondImage.value && secondClipPath.value && !secondImage.value.clipPath) {
             secondImage.value.clipPath = secondClipPath.value;
         }
+
+        // Estado antigo sem clipPaths (ex.: salvo por versões anteriores): reconstrói
+        if (!firstClipPath.value || !secondClipPath.value) {
+            await addClipPaths();
+        }
         
         fabricCanvas.getObjects().forEach(obj => {
             if (obj.id !== 'drawingArea' && obj.class !== 'resize-handle' && obj.id !== 'watermark') {
@@ -1668,8 +1806,8 @@ async function restoreCanvasState(state) {
         });
         
         if (drawingArea.value) {
-            drawingAreaWidth.value = drawingArea.value.width;
-            drawingAreaHeight.value = drawingArea.value.height;
+            drawingAreaWidth.value = Math.round(drawingArea.value.width);
+            drawingAreaHeight.value = Math.round(drawingArea.value.height);
         }
         
         fabricCanvas.requestRenderAll();
@@ -1685,12 +1823,10 @@ async function restoreCanvasState(state) {
     await new Promise(resolve => setTimeout(resolve, 50));
     
     const modeToApply = restoredDisplayMode || displayMode.value;
-    console.log('🔙 Calling switchDisplayMode after restore:', modeToApply);
     
     if (modeToApply) {
         await switchDisplayMode(modeToApply, { skipSave: true, force: true });
     }
-    console.log('🔙 UNDO/REDO END');
 }
 
 function inferDisplayModeFromClipPaths(stateObj) {
@@ -1749,14 +1885,13 @@ function setupCanvasStateListeners() {
             clearAllHoverStates();
 
             // se a ferramenta ativa não for 'select', ignora a seleção
-            if (['draw', 'rectangle', 'circle', 'triangle', 'line', 'arrow', 'erase'].includes(activeTool.value)) {
+            if (['draw', 'rectangle', 'circle', 'triangle', 'line', 'arrow'].includes(activeTool.value)) {
                 fabricCanvas.discardActiveObject();
                 fabricCanvas.requestRenderAll();
                 manageSelection(null);
                 return;
             }
 
-            // console.log(e);
             if (e.selected.length > 1) {
                 const objectsToIgnore = e.selected.filter(o => o.id === 'drawingArea' || o.class === 'resize-handle');
 
@@ -1823,6 +1958,12 @@ function setupCanvasStateListeners() {
         },
         'object:scaling': (e) => {
             const obj = e.target;
+
+            if (obj?.id === 'cropRect') {
+                constrainCropRect(true);
+                return;
+            }
+
             watchObjectScale.value = false
 
             objectScaleX.value = obj.scaleX.toFixed(2);
@@ -1848,17 +1989,51 @@ function manageSelection(object) {
  */
 function handleKeyDown(e) {
 
-    if(showCompareModal.value || showCropperModal.value) return;
+    // Digitação em campos de formulário (ex.: largura/altura da toolbar) não pode
+    // disparar atalhos de ferramenta nem deletar o objeto selecionado
+    const eventTarget = e.composedPath ? e.composedPath()[0] : e.target;
+    const tagName = eventTarget?.tagName?.toUpperCase?.() || '';
+    if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || eventTarget?.isContentEditable) {
+        return;
+    }
 
-    // Atalho para Desfazer: Ctrl+Z
-    if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+    // No modo de recorte só valem Enter (aplica) e Escape (cancela)
+    if (cropMode.value) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            applyCrop();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelCrop();
+        }
+        return;
+    }
+
+    // Atalhos de desfazer/refazer: Ctrl no Windows/Linux, Cmd (metaKey) no Mac
+    const modKey = e.ctrlKey || e.metaKey;
+    if (modKey && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
         e.preventDefault();
         undo();
     }
-    // Atalho para Refazer: Ctrl+Shift+Z ou Ctrl+Y
-    if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) {
+    if (modKey && (e.key === 'y' || (e.shiftKey && (e.key === 'Z' || e.key === 'z')))) {
         e.preventDefault();
         redo();
+    }
+
+    // Copiar / colar / recortar objetos (fotos principais ficam de fora)
+    if (modKey && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault();
+        copySelectedObjects();
+    }
+    if (modKey && (e.key === 'v' || e.key === 'V')) {
+        e.preventDefault();
+        pasteClipboardObjects();
+    }
+    if (modKey && (e.key === 'x' || e.key === 'X')) {
+        e.preventDefault();
+        copySelectedObjects().then((copied) => {
+            if (copied) removeSelectedObjects();
+        });
     }
     // Atalho para Remover: Delete ou Backspace
     // Não dispara quando um IText está em modo de edição (senão apaga o objeto inteiro em vez da letra)
@@ -1947,21 +2122,124 @@ function handleKeyDown(e) {
                 setActiveTool('text');
                 break;
             case '9':
-                setActiveTool('eraser');
+                setActiveTool('hand');
                 break;
             default:
                 break;
+        }
+
+        // Segurar espaço vira mão temporária (padrão de editores); solta e volta
+        if (e.key === ' ' && !e.repeat && activeTool.value !== 'hand') {
+            e.preventDefault();
+            spacePanPrevTool = activeTool.value;
+            spacePanPrevSelection = fabricCanvas.getActiveObject() || null;
+            setActiveTool('hand');
+        } else if (e.key === ' ') {
+            e.preventDefault(); // evita scroll da página do host enquanto segura
         }
     }
 }
 
 function handleKeyUp(e) {
-    
-    if(showCompareModal.value || showCropperModal.value) return;
 
     if (e.key === 'Alt') {
         altKeyPressed.value = false;
     }
+
+    // Soltou o espaço: volta pra ferramenta e seleção de antes da mão temporária
+    if (e.key === ' ' && spacePanPrevTool !== null) {
+        setActiveTool(spacePanPrevTool);
+        if (spacePanPrevSelection && fabricCanvas.getObjects().includes(spacePanPrevSelection)) {
+            fabricCanvas.setActiveObject(spacePanPrevSelection);
+            fabricCanvas.requestRenderAll();
+        }
+        spacePanPrevTool = null;
+        spacePanPrevSelection = null;
+    }
+}
+
+// === COPIAR / COLAR OBJETOS (Cmd/Ctrl+C/V/X) ===
+
+/**
+ * Objeto pode ir pro clipboard? Anotações sim; fotos principais e cromo do editor não.
+ */
+function isCopyableObject(obj) {
+    return isSelectableObject(obj) && obj.id !== 'firstImage' && obj.id !== 'secondImage';
+}
+
+/**
+ * Copia a seleção atual (objeto único ou seleção múltipla) pro clipboard interno.
+ * Objetos dentro de uma seleção múltipla têm coordenadas relativas ao grupo — os
+ * clones são convertidos pra coordenadas absolutas na cópia.
+ */
+async function copySelectedObjects() {
+    const active = fabricCanvas.getActiveObject();
+    if (!active) return false;
+
+    const isSelection = active.type?.toLowerCase() === 'activeselection';
+    const targets = (isSelection ? active.getObjects() : [active]).filter(isCopyableObject);
+    if (!targets.length) return false;
+
+    objectClipboard = await Promise.all(targets.map(async (obj) => {
+        const clone = await obj.clone();
+        if (isSelection) {
+            const decomposed = util.qrDecompose(obj.calcTransformMatrix());
+            clone.set({
+                angle: decomposed.angle,
+                scaleX: decomposed.scaleX,
+                scaleY: decomposed.scaleY,
+                skewX: decomposed.skewX,
+                skewY: decomposed.skewY,
+                flipX: false,
+                flipY: false,
+            });
+            clone.setPositionByOrigin(
+                new Point(decomposed.translateX, decomposed.translateY),
+                'center',
+                'center',
+            );
+        }
+        clone.setCoords();
+        return clone;
+    }));
+
+    return true;
+}
+
+/**
+ * Cola o clipboard com deslocamento em cascata (cada colagem desce um degrau).
+ */
+async function pasteClipboardObjects() {
+    if (!objectClipboard.length || cropMode.value) return;
+
+    const OFFSET = 16;
+    const pasted = [];
+
+    for (const stored of objectClipboard) {
+        // Desloca o item guardado: colagens sucessivas cascateiam
+        stored.set({ left: stored.left + OFFSET, top: stored.top + OFFSET });
+
+        const clone = await stored.clone();
+        clone.set({
+            evented: true,
+            selectable: true,
+            id: `${stored.id || clone.type}-copy-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        });
+        applyStyleToControls(clone);
+        fabricCanvas.add(clone);
+        pasted.push(clone);
+    }
+
+    setActiveTool('select');
+    fabricCanvas.discardActiveObject();
+    if (pasted.length === 1) {
+        fabricCanvas.setActiveObject(pasted[0]);
+    } else {
+        fabricCanvas.setActiveObject(new ActiveSelection(pasted, { canvas: fabricCanvas }));
+    }
+
+    fabricCanvas.requestRenderAll();
+    saveCanvasState();
 }
 
 /**
@@ -1977,15 +2255,16 @@ function removeSelectedObjects() {
     // Verifica se é uma seleção múltipla
     if (activeObject.type === 'activeSelection') {
         if (activeObject.id === 'firstImage' || activeObject.id === 'secondImage') {
-            alert('Ainda não é possível remover as imagens principais porque não há como adicioná-las novamente.');
+            showToast('As fotos da comparação não podem ser removidas — recorte ou reposicione se precisar.');
             return; // Não remove elementos essenciais
         }
 
         const objectsToRemove = activeObject.getObjects().filter(obj => {
-            // Não permite remover imagens principais, área de desenho ou handlers de resize
+            // Não permite remover imagens principais, área de desenho ou cromo do editor
             return obj.id !== 'drawingArea' &&
                 obj.id !== 'watermark' &&
-                obj.class !== 'resize-handle';
+                obj.class !== 'resize-handle' &&
+                obj.class !== 'crop-chrome';
         });
 
         if (objectsToRemove.length > 0) {
@@ -1998,13 +2277,14 @@ function removeSelectedObjects() {
         }
     } else {
         if (activeObject.id === 'firstImage' || activeObject.id === 'secondImage') {
-            alert('Ainda não é possível remover as imagens principais porque não há como adicioná-las novamente.');
+            showToast('As fotos da comparação não podem ser removidas — recorte ou reposicione se precisar.');
             return; // Não remove elementos essenciais
         }
         // Verificações de segurança - não permite remover elementos essenciais
         if (activeObject.id === 'drawingArea' ||
             activeObject.id === 'watermark' ||
-            activeObject.class === 'resize-handle') {
+            activeObject.class === 'resize-handle' ||
+            activeObject.class === 'crop-chrome') {
             return; // Não remove elementos essenciais
         }
 
@@ -2023,16 +2303,13 @@ function addDrawingAreaHandlers() {
     if (!drawingArea.value) return;
 
     const existingHandles = fabricCanvas.getObjects().filter(o => o.class === 'resize-handle');
-    console.log('🔧 addDrawingAreaHandlers: existing handlers:', existingHandles.length);
     
     if (existingHandles.length > 0) {
-        console.warn('⚠️ Found', existingHandles.length, 'handlers - removing');
         existingHandles.forEach(handle => fabricCanvas.remove(handle));
         fabricCanvas.requestRenderAll();
     }
 
     const commonProps = {
-        hasBorders: false,
         fill: handlersColor,
         strokeWidth: 1,
         stroke: 'transparent',
@@ -2043,7 +2320,6 @@ function addDrawingAreaHandlers() {
         selectable: true,
         class: 'resize-handle',
         padding: 2,
-        // excludeFromExport: true,
     };
 
     const leftHandle = new Rect({
@@ -2163,15 +2439,6 @@ function addDrawingAreaHandlers() {
     fabricCanvas.add(topRightHandle);
     fabricCanvas.add(bottomLeftHandle);
     fabricCanvas.add(bottomRightHandle);
-    
-    const totalHandlers = fabricCanvas.getObjects().filter(o => o.class === 'resize-handle').length;
-    console.log('🔧 addDrawingAreaHandlers: created 8, total now:', totalHandlers);
-    
-    if (totalHandlers !== 8) {
-        console.error('❌ WRONG COUNT! Expected 8 but got', totalHandlers);
-        const allHandlers = fabricCanvas.getObjects().filter(o => o.class === 'resize-handle');
-        allHandlers.forEach(h => console.log('  ', h.id));
-    }
 }
 
 /**
@@ -2299,7 +2566,6 @@ async function resetZoom() {
  * Faz zoom in (aumenta o zoom) com animação suave
  */
 async function zoomIn(factor = 1.2) {
-    console.log('zoomIn');
     
     const currentZoom = fabricCanvas.getZoom();
     const newZoom = Math.min(currentZoom * factor, maxZoom.value);
@@ -2331,7 +2597,6 @@ async function fitToCanvas(withTransition = true, skipDrawingAreaUpdate = false)
     if (!firstImage.value || !secondImage.value) return;
 
     const currentZoomBefore = fabricCanvas.getZoom();
-    console.log('📐 fitToCanvas START | current zoom:', Math.round(currentZoomBefore * 100) + '%', '| skipDrawingAreaUpdate:', skipDrawingAreaUpdate);
 
     const canvasWidth = fabricCanvas.getWidth();
     const canvasHeight = fabricCanvas.getHeight();
@@ -2361,7 +2626,6 @@ async function fitToCanvas(withTransition = true, skipDrawingAreaUpdate = false)
     const currentTransform = [...fabricCanvas.viewportTransform];
     const targetTransform = [1, 0, 0, 1, 0, 0];
 
-    console.log('📐 fitToCanvas: calculated target zoom:', Math.round(targetZoom * 100) + '%');
 
     if(withTransition) {
         // Anima o zoom e o viewport em paralelo
@@ -2377,14 +2641,11 @@ async function fitToCanvas(withTransition = true, skipDrawingAreaUpdate = false)
     }
     
     const finalZoom = fabricCanvas.getZoom();
-    console.log('📐 fitToCanvas END | zoom now:', Math.round(finalZoom * 100) + '% | zoomLevel.value:', Math.round(zoomLevel.value * 100) + '%');
 
     // Só atualiza a área de desenho se não for chamado de switchDisplayMode
     if (!skipDrawingAreaUpdate) {
-        console.log('📐 fitToCanvas: calling addDrawingArea (will remove handlers!)');
         await addDrawingArea();
         const handlersAfterFit = fabricCanvas.getObjects().filter(o => o.class === 'resize-handle').length;
-        console.log('📐 fitToCanvas END:', handlersAfterFit, 'handlers');
     }
 }
 
@@ -2413,14 +2674,11 @@ async function ensureDrawingAreaVisible() {
 
     // Aplica o zoom se necessário
     if (targetZoom !== currentZoom) {
-        console.log('📏 ensureDrawingAreaVisible: adjusting zoom from', Math.round(currentZoom * 100) + '% to', Math.round(targetZoom * 100) + '%');
         const centerPoint = drawingArea.value.getCenterPoint();
         fabricCanvas.zoomToPoint(centerPoint, targetZoom);
         zoomLevel.value = targetZoom;
         fabricCanvas.requestRenderAll();
-        console.log('📏 ensureDrawingAreaVisible END | zoomLevel.value:', Math.round(zoomLevel.value * 100) + '%');
     } else {
-        console.log('📏 ensureDrawingAreaVisible: no zoom adjustment needed');
     }
 }
 
@@ -2431,6 +2689,7 @@ function createText(x, y) {
         fontSize: textFontSize.value,
         fontFamily: textFontFamily.value,
         fill: textColor.value,
+        textBackgroundColor: textBgColor.value || '',
         fontWeight: textIsBold.value ? 'bold' : 'normal',
         fontStyle: textIsItalic.value ? 'italic' : 'normal',
         underline: textIsUnderline.value,
@@ -2462,7 +2721,7 @@ function createText(x, y) {
 function isSelectableObject(obj) {
     // Exclui objetos essenciais do sistema
     const excludedIds = ['drawingArea', 'watermark'];
-    const excludedClasses = ['resize-handle'];
+    const excludedClasses = ['resize-handle', 'crop-chrome', 'hover-outline'];
 
     return obj &&
         obj.selectable &&
@@ -2470,89 +2729,49 @@ function isSelectableObject(obj) {
         !excludedClasses?.includes(obj.class);
 }
 
-async function setHoverState(target) {
-    // Lógica para objetos selecionáveis (hover highlight)
-    if (target && isSelectableObject(target)) {
-        
-        // Só aplica hover se o objeto não estiver já selecionado
-        const activeObject = fabricCanvas.getActiveObject();
-        const isCurrentlySelected = activeObject === target ||
-            (activeObject?.type === 'activeSelection' && activeObject.contains(target));
+// Contorno único e reutilizado pro hover — clonar o objeto (abordagem antiga) era
+// caro demais: cada passada de mouse numa foto clonava a imagem inteira.
+let hoverOutline = null;
 
-        if (!isCurrentlySelected) {
-            // // Salva o estado original das bordas se ainda não foi salvo
-            // if (!target._originalBorderState) {
-            //     target._originalBorderState = {
-            //         borderColor: target.borderColor,
-            //         hasBorders: target.hasBorders,
-            //         borderWidth: target.borderWidth
-            //     };
-            // }
+function setHoverState(target) {
+    if (!target || !isSelectableObject(target)) return;
 
-            // // Aplica o estilo de hover
-            // target.set({
-            //     borderColor: '#007ACC', // Cor azul para hover
-            //     hasBorders: true,
-            //     borderWidth: 2,
-            // });
+    // Só aplica hover se o objeto não estiver já selecionado
+    const activeObj = fabricCanvas.getActiveObject();
+    const isCurrentlySelected = activeObj === target ||
+        (activeObj?.type === 'activeSelection' && activeObj.contains?.(target));
+    if (isCurrentlySelected) return;
 
-            let clone = await target.clone();
+    clearHoverOutline();
 
-            const type = clone.type;
+    const bounds = target.getBoundingRect();
+    hoverOutline = new Rect({
+        left: bounds.left - 2,
+        top: bounds.top - 2,
+        width: bounds.width + 4,
+        height: bounds.height + 4,
+        fill: 'transparent',
+        stroke: commonStore.brandColor,
+        strokeWidth: 2,
+        strokeUniform: true,
+        selectable: false,
+        evented: false,
+        excludeFromExport: true,
+        objectCaching: false,
+        hoverCursor: 'default',
+        id: 'hover-outline',
+        class: 'hover-outline',
+    });
 
-            clone.set({
-                selectable: false,
-                evented: false,
-                hoverCursor: 'default',
-                id: `${target.id}-hover`,
-                stroke: commonStore.brandColor,
-                strokeWidth: target.strokeWidth ? target.strokeWidth + 4 : 4,
-                fill: target.fill || 'transparent',
-                paintFirst: 'stroke',
-            });
+    fabricCanvas.add(hoverOutline);
+    fabricCanvas.bringObjectToFront(hoverOutline);
+    fabricCanvas.requestRenderAll();
+}
 
-            if (type === 'path') {
-                clone.set({
-                    left: clone.left - clone.strokeWidth / 2,
-                    top: clone.top - clone.strokeWidth / 2,
-                });
-            }
-
-            if (type === 'i-text' || type === 'textbox') {
-                // Textboxes e IText precisam de ajuste especial
-                clone.set({
-                    left: clone.left - clone.strokeWidth / 2,
-                    top: clone.top - clone.strokeWidth / 2,
-                });
-            }
-
-            if (type === 'image' || type === 'rect' || type === 'ellipse') {
-                // create a rectangle with the same dimensions as the image
-                const rect = new Rect({
-                    left: clone.left - clone.strokeWidth,
-                    top: clone.top - clone.strokeWidth,
-                    width: clone.getScaledWidth(),
-                    height: clone.getScaledHeight(),
-                    fill: 'transparent',
-                    selectable: false,
-                    evented: false,
-                    hoverCursor: 'default',
-                    id: `${target.id}-hover`,
-                    angle: clone.angle,
-                    stroke: clone.stroke,
-                    strokeWidth: clone.strokeWidth,
-                    strokeColor: clone.strokeColor,
-                    paintFirst: 'stroke',
-                });
-
-                clone = rect;
-            }
-
-            fabricCanvas.add(clone);
-            fabricCanvas.bringObjectToFront(clone);
-
-            fabricCanvas.requestRenderAll();
-        }
+function clearHoverOutline() {
+    if (hoverOutline) {
+        fabricCanvas.remove(hoverOutline);
+        hoverOutline = null;
     }
 }
 
@@ -2560,8 +2779,9 @@ async function setHoverState(target) {
  * Remove estados de hover de todos os objetos
  */
 function clearAllHoverStates() {
+    clearHoverOutline();
     fabricCanvas.getObjects().forEach(obj => {
-        if (obj.id && obj.id.includes('-hover')) {
+        if (obj.class === 'hover-outline') {
             fabricCanvas.remove(obj);
         } else if (obj.class === 'resize-handle') {
             // Reseta a cor dos handlers de resize
@@ -2620,6 +2840,7 @@ function createArrowShape(x1, y1, x2, y2, strokeWidth, strokeColor, baseOptions 
         strokeLineCap: 'round',
         strokeLineJoin: 'round',
         perPixelTargetFind: true,
+        padding: 6,
         strokeUniform: true,
         pathOffset: { x: 0, y: 0 },
     });
@@ -2629,54 +2850,106 @@ function setupFabricEvents() {
     if (!fabricCanvas) return;
 
     fabricCanvas.on('mouse:wheel', function (opt) {
-        const delta = opt.e.deltaY;
+        const e = opt.e;
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Zoom proporcional à magnitude real do gesto: trackpads disparam dezenas de
+        // eventos com deltas pequenos e mouses poucos eventos com deltas grandes — o
+        // passo fixo antigo explodia no trackpad. Pinch de trackpad chega como wheel
+        // com ctrlKey e precisa de sensibilidade maior.
+        const sensitivity = e.ctrlKey ? 0.01 : 0.0015;
+        let delta = e.deltaY;
+        if (e.deltaMode === 1) delta *= 33; // deltaMode em linhas (Firefox) → px
+
         const currentZoom = fabricCanvas.getZoom();
+        const factor = Math.exp(-delta * sensitivity);
+        const newZoom = Math.min(Math.max(currentZoom * factor, minZoom.value), maxZoom.value);
+        if (newZoom === currentZoom) return;
 
-        // Calcula o novo nível de zoom com incrementos mais suaves
-        const zoomStep = delta > 0 ? 0.9 : 1.1;
-        let newZoom = currentZoom * zoomStep;
-        newZoom = Math.min(Math.max(newZoom, minZoom.value), maxZoom.value);
-
-        // Se o zoom não mudou (limite atingido), não faz nada
-        if (newZoom === currentZoom) {
-            opt.e.preventDefault();
-            opt.e.stopPropagation();
-            return;
-        }
-
-        // Obtém as coordenadas do mouse em relação ao canvas (viewport coordinates)
-        const canvasRect = fabricCanvas.upperCanvasEl.getBoundingClientRect();
-        const mouseX = opt.e.clientX - canvasRect.left;
-        const mouseY = opt.e.clientY - canvasRect.top;
-
-        // Converte para coordenadas do world space (canvas coordinates)
-        const vpt = fabricCanvas.viewportTransform;
-        const worldX = (mouseX - vpt[4]) / vpt[0];
-        const worldY = (mouseY - vpt[5]) / vpt[3];
-
-        // Calcula o novo viewport transform para manter o ponto sob o mouse fixo
-        const newVpt = [...vpt];
-
-        // Atualiza a escala
-        newVpt[0] = newZoom;
-        newVpt[3] = newZoom;
-
-        // Ajusta a translação para manter o ponto sob o mouse na mesma posição na tela
-        newVpt[4] = mouseX - worldX * newZoom;
-        newVpt[5] = mouseY - worldY * newZoom;
-
-        // Aplica a transformação
-        fabricCanvas.setViewportTransform(newVpt);
-
+        // Zoom ancorado no ponteiro
+        fabricCanvas.zoomToPoint(new Point(e.offsetX, e.offsetY), newZoom);
         zoomLevel.value = newZoom;
-
-        updateWatermarkPosition();
-
-        opt.e.preventDefault();
-        opt.e.stopPropagation();
-
         fabricCanvas.requestRenderAll();
     });
+
+    // === Gestos de toque: pinch (zoom) + pan com 2 dedos ===
+    // Listeners em fase de captura no wrapper: eventos de 2 dedos são consumidos aqui
+    // e nunca chegam ao Fabric (1 dedo segue normal pra desenhar/selecionar/mover).
+    let pinchState = null;
+
+    const getTouchesInfo = (e) => {
+        const rect = fabricCanvas.upperCanvasEl.getBoundingClientRect();
+        const [t1, t2] = [e.touches[0], e.touches[1]];
+        return {
+            midX: (t1.clientX + t2.clientX) / 2 - rect.left,
+            midY: (t1.clientY + t2.clientY) / 2 - rect.top,
+            distance: Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY),
+        };
+    };
+
+    const onTouchStartCapture = (e) => {
+        if (e.touches.length < 2) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Aborta interação que o 1º dedo tenha iniciado (drag/desenho)
+        fabricCanvas._currentTransform = null;
+        if (!cropMode.value) {
+            fabricCanvas.discardActiveObject();
+        }
+        pinchState = {
+            ...getTouchesInfo(e),
+            zoom: fabricCanvas.getZoom(),
+            wasDrawingMode: fabricCanvas.isDrawingMode,
+        };
+        if (fabricCanvas.isDrawingMode) fabricCanvas.isDrawingMode = false;
+        fabricCanvas.requestRenderAll();
+    };
+
+    const onTouchMoveCapture = (e) => {
+        if (!pinchState || e.touches.length < 2) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        const info = getTouchesInfo(e);
+
+        // Zoom absoluto em relação ao início do gesto (estável, sem acumular erro)
+        const newZoom = Math.min(
+            Math.max(pinchState.zoom * (info.distance / pinchState.distance), minZoom.value),
+            maxZoom.value,
+        );
+        fabricCanvas.zoomToPoint(new Point(info.midX, info.midY), newZoom);
+
+        // Pan pelo deslocamento do ponto médio dos dedos
+        const vpt = fabricCanvas.viewportTransform;
+        vpt[4] += info.midX - pinchState.midX;
+        vpt[5] += info.midY - pinchState.midY;
+        fabricCanvas.setViewportTransform(vpt);
+
+        pinchState.midX = info.midX;
+        pinchState.midY = info.midY;
+        zoomLevel.value = newZoom;
+        fabricCanvas.requestRenderAll();
+    };
+
+    const onTouchEndCapture = (e) => {
+        if (!pinchState) return;
+        if (e.touches.length >= 2) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (pinchState.wasDrawingMode) fabricCanvas.isDrawingMode = true;
+        pinchState = null;
+    };
+
+    const touchTarget = canvasWrapper.value;
+    if (touchTarget) {
+        touchTarget.addEventListener('touchstart', onTouchStartCapture, { capture: true, passive: false });
+        touchTarget.addEventListener('touchmove', onTouchMoveCapture, { capture: true, passive: false });
+        touchTarget.addEventListener('touchend', onTouchEndCapture, { capture: true, passive: false });
+        touchTarget.addEventListener('touchcancel', onTouchEndCapture, { capture: true, passive: false });
+    }
 
     // Desabilita a seleção de grupo com clique e arraste para evitar conflitos
     fabricCanvas.selection = false;
@@ -2685,6 +2958,12 @@ function setupFabricEvents() {
     let isDragging = false;
     let lastPosX = 0;
     let lastPosY = 0;
+
+    // clientX/Y tanto pra mouse quanto pra toque de 1 dedo (o Fabric repassa TouchEvent)
+    const pointFromEvent = (evt) => ({
+        x: evt.touches?.[0]?.clientX ?? evt.changedTouches?.[0]?.clientX ?? evt.clientX,
+        y: evt.touches?.[0]?.clientY ?? evt.changedTouches?.[0]?.clientY ?? evt.clientY,
+    });
 
     fabricCanvas.on('text:editing:entered', function () {
         activeTool.value = 'text';
@@ -2706,6 +2985,15 @@ function setupFabricEvents() {
         const evt = opt.e;
         // remove all hover states
         clearAllHoverStates();
+
+        // No modo de recorte, clique fora do retângulo não pode desselecionar as alças
+        if (cropMode.value) {
+            if (cropRect && opt.target !== cropRect) {
+                fabricCanvas.setActiveObject(cropRect);
+                fabricCanvas.requestRenderAll();
+            }
+            return;
+        }
 
         if (activeTool.value === 'rectangle') {
 
@@ -2791,6 +3079,7 @@ function setupFabricEvents() {
                 evented: false,
                 id: `line-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
                 perPixelTargetFind: true,
+                padding: 6,
             });
 
             fabricCanvas.add(line);
@@ -2836,8 +3125,26 @@ function setupFabricEvents() {
                 return;
             }
 
+            // Clicar num texto existente edita ele, em vez de criar outro por cima
+            if (opt.target && opt.target.type === 'i-text') {
+                fabricCanvas.setActiveObject(opt.target);
+                opt.target.enterEditing(evt);
+                fabricCanvas.requestRenderAll();
+                return;
+            }
+
             const pointer = fabricCanvas.getPointer(evt);
             createText(pointer.x, pointer.y);
+            return;
+        }
+
+        // Ferramenta mão: arrastar (mouse ou 1 dedo) move a visualização
+        if (activeTool.value === 'hand' && evt.button !== 2) {
+            const point = pointFromEvent(evt);
+            isDragging = true;
+            lastPosX = point.x;
+            lastPosY = point.y;
+            fabricCanvas.setCursor('grabbing');
             return;
         }
 
@@ -2867,12 +3174,12 @@ function setupFabricEvents() {
 
     fabricCanvas.on('mouse:move', function (opt) {
         if (isDragging) {
-            const evt = opt.e;
+            const point = pointFromEvent(opt.e);
             const vpt = fabricCanvas.viewportTransform;
-            vpt[4] += evt.clientX - lastPosX;
-            vpt[5] += evt.clientY - lastPosY;
-            lastPosX = evt.clientX;
-            lastPosY = evt.clientY;
+            vpt[4] += point.x - lastPosX;
+            vpt[5] += point.y - lastPosY;
+            lastPosX = point.x;
+            lastPosY = point.y;
             fabricCanvas.setCursor('grabbing');
         }
 
@@ -2890,15 +3197,12 @@ function setupFabricEvents() {
         if (isDrawingRect.value) {
             const pointer = fabricCanvas.getPointer(opt.e);
 
-            if (origX > pointer.x) {
-                rect.set({ left: Math.abs(pointer.x) });
-            }
-            if (origY > pointer.y) {
-                rect.set({ top: Math.abs(pointer.y) });
-            }
-
-            rect.set({ width: Math.abs(origX - pointer.x) });
-            rect.set({ height: Math.abs(origY - pointer.y) });
+            rect.set({
+                left: Math.min(origX, pointer.x),
+                top: Math.min(origY, pointer.y),
+                width: Math.abs(origX - pointer.x),
+                height: Math.abs(origY - pointer.y),
+            });
         }
 
         if (isDrawingCircle.value) {
@@ -2926,15 +3230,12 @@ function setupFabricEvents() {
         if (isDrawingTriangle.value) {
             const pointer = fabricCanvas.getPointer(opt.e);
 
-            if (origX > pointer.x) {
-                triangle.set({ left: Math.abs(pointer.x) });
-            }
-            if (origY > pointer.y) {
-                triangle.set({ top: Math.abs(pointer.y) });
-            }
-
-            triangle.set({ width: Math.abs(origX - pointer.x) });
-            triangle.set({ height: Math.abs(origY - pointer.y) });
+            triangle.set({
+                left: Math.min(origX, pointer.x),
+                top: Math.min(origY, pointer.y),
+                width: Math.abs(origX - pointer.x),
+                height: Math.abs(origY - pointer.y),
+            });
         }
 
         if (isDrawingLine.value) {
@@ -2963,6 +3264,8 @@ function setupFabricEvents() {
                 evented: false,
                 id: line.id,
                 perPixelTargetFind: line.perPixelTargetFind,
+                padding: line.padding,
+                opacity: line.opacity,
             });
 
             fabricCanvas.remove(line);
@@ -2994,15 +3297,29 @@ function setupFabricEvents() {
             arrow.setCoords();
         }
 
-        fabricCanvas.renderAll();
+        // Só re-renderiza quando algo realmente mudou (pan/desenho em andamento);
+        // renderizar em todo movimento de mouse desperdiça CPU à toa
+        if (
+            isDragging ||
+            isPanning.value ||
+            isDrawingRect.value ||
+            isDrawingCircle.value ||
+            isDrawingTriangle.value ||
+            isDrawingLine.value ||
+            isDrawingArrow.value
+        ) {
+            fabricCanvas.requestRenderAll();
+        }
     });
 
     fabricCanvas.on('mouse:up', function () {
         if (isDragging) {
             fabricCanvas.setViewportTransform(fabricCanvas.viewportTransform);
             isDragging = false;
-            fabricCanvas.selection = true;
-            fabricCanvas.setCursor('default');
+            if (activeTool.value !== 'hand') {
+                fabricCanvas.selection = true;
+            }
+            fabricCanvas.setCursor(activeTool.value === 'hand' ? 'grab' : 'default');
         }
 
         // Finalizar pan com botão direito
@@ -3013,66 +3330,58 @@ function setupFabricEvents() {
             fabricCanvas.setCursor('default');
         }
 
+        // Finaliza o desenho de uma forma: descarta cliques sem arrasto (forma de
+        // tamanho zero) e volta pra seleção com a forma ativa, pronta pra ajustar
+        const finishShapeDrawing = (shape, isDegenerate) => {
+            if (!shape) return;
+
+            if (isDegenerate) {
+                fabricCanvas.remove(shape);
+                fabricCanvas.requestRenderAll();
+                return;
+            }
+
+            shape.set({ selectable: true, evented: true });
+            shape.setCoords();
+            applyStyleToControls(shape);
+            saveCanvasState();
+            setActiveTool('select');
+            fabricCanvas.setActiveObject(shape);
+            fabricCanvas.requestRenderAll();
+        };
+
         if (isDrawingRect.value) {
             isDrawingRect.value = false;
-            rect.setCoords();
-            applyStyleToControls(rect);
-            fabricCanvas.setActiveObject(rect);
-            saveCanvasState();
-            // Mantém a ferramenta ativa ao invés de voltar para seleção
-            setActiveTool('rectangle');
+            finishShapeDrawing(rect, rect.width < 2 && rect.height < 2);
             return;
         }
 
         if (isDrawingCircle.value) {
             isDrawingCircle.value = false;
-            circle.setCoords();
-            applyStyleToControls(circle);
-            fabricCanvas.setActiveObject(circle);
-            saveCanvasState();
-            // Mantém a ferramenta ativa ao invés de voltar para seleção
-            setActiveTool('circle');
+            finishShapeDrawing(circle, circle.radius < 2);
             return;
         }
 
         if (isDrawingTriangle.value) {
             isDrawingTriangle.value = false;
-            triangle.setCoords();
-            applyStyleToControls(triangle);
-            fabricCanvas.setActiveObject(triangle);
-            saveCanvasState();
-            // Mantém a ferramenta ativa ao invés de voltar para seleção
-            setActiveTool('triangle');
+            finishShapeDrawing(triangle, triangle.width < 2 && triangle.height < 2);
             return;
         }
 
         if (isDrawingLine.value) {
             isDrawingLine.value = false;
-            line.set({
-                selectable: true,
-                evented: true,
-            });
-            line.setCoords();
-            applyStyleToControls(line);
-            fabricCanvas.setActiveObject(line);
-            saveCanvasState();
-            // Mantém a ferramenta ativa ao invés de voltar para seleção
-            setActiveTool('line');
+            const points = line.points || [];
+            const length = points.length < 2 ? 0 : Math.hypot(
+                points[points.length - 1].x - points[0].x,
+                points[points.length - 1].y - points[0].y,
+            );
+            finishShapeDrawing(line, length < 2);
             return;
         }
 
         if (isDrawingArrow.value) {
             isDrawingArrow.value = false;
-            arrow.set({
-                selectable: true,
-                evented: true,
-            });
-            arrow.setCoords();
-            applyStyleToControls(arrow);
-            fabricCanvas.setActiveObject(arrow);
-            saveCanvasState();
-            // Mantém a ferramenta ativa ao invés de voltar para seleção
-            setActiveTool('arrow');
+            finishShapeDrawing(arrow, arrow.width < 2 && arrow.height < 2);
             return;
         }
     });
@@ -3110,26 +3419,9 @@ function setupFabricEvents() {
             return;
         }
 
-        // Lógica para objetos selecionáveis (remover hover highlight)
+        // Remove o contorno de hover ao sair do objeto
         if (target && isSelectableObject(target)) {
-
-            // if (!isCurrentlySelected) {
-            //     Restaura o estado original das bordas
-            //     target.set({
-            //         borderColor: target._originalBorderState.borderColor,
-            //         hasBorders: target._originalBorderState.hasBorders,
-            //         borderWidth: target._originalBorderState.borderWidth
-            //     });
-
-            //     // Remove o estado salvo
-            //     delete target._originalBorderState;
-
-            // }
-            const hoverClone = fabricCanvas.getObjects().find(o => o.id === `${target.id}-hover`);
-            if (hoverClone) {
-                fabricCanvas.remove(hoverClone);
-            }
-
+            clearHoverOutline();
             fabricCanvas.requestRenderAll();
         }
     });
@@ -3146,12 +3438,30 @@ function setupFabricEvents() {
         }
     });
 
+    // Duplo clique numa das fotos entra direto no modo de recorte
+    fabricCanvas.on('mouse:dblclick', function (opt) {
+        const target = opt.target;
+        if (
+            !cropMode.value &&
+            target &&
+            (target.id === 'firstImage' || target.id === 'secondImage') &&
+            (activeTool.value === 'select' || activeTool.value === null)
+        ) {
+            enterCropMode(target);
+        }
+    });
+
     // Adiciona listener para manter as imagens centralizadas quando movidas
     fabricCanvas.on('object:moving', function (e) {
         const obj = e.target;
         const objects = fabricCanvas.getObjects();
 
-        if (obj.id === firstImage.value.id || obj.id === secondImage.value.id) {
+        if (obj.id === 'cropRect') {
+            constrainCropRect(false);
+            return;
+        }
+
+        if (obj.id === firstImage.value?.id || obj.id === secondImage.value?.id) {
             // Marca que a imagem foi movida manualmente; para não recentralizar automaticamente
             obj.set('isManuallyMoved', true);
         }
@@ -3431,8 +3741,6 @@ function centerImagesInClipPaths() {
 
 
 
-
-
     const firstClipPathObj = firstImage.value.clipPath;
     const secondClipPathObj = secondImage.value.clipPath;
 
@@ -3555,8 +3863,12 @@ async function loadImages() {
         imgLeft.scale(scale * preScaleLeft);
         imgRight.scale(scale * preScaleRight);
 
-        // Guarda a escala de ajuste ao container para usar como multiplicador na exportação
-        fitScale.value = scale;
+        // No celular as fotos são exibidas muito reduzidas; permite zoom até perto
+        // da resolução real da foto mais nítida (teto de 40x por sanidade)
+        const smallestScale = Math.min(scale * preScaleLeft, scale * preScaleRight);
+        if (smallestScale > 0 && smallestScale < 1) {
+            maxZoom.value = Math.max(4.5, Math.min((1 / smallestScale) * 1.5, 40));
+        }
 
         // set id for images e flags iniciais
         imgLeft.set({
@@ -3678,6 +3990,7 @@ function setActiveTool(tool) {
     // Reseta para o padrão: seleção ativa, modo de desenho desativado
     fabricCanvas.isDrawingMode = false;
     fabricCanvas.selection = true;
+    fabricCanvas.skipTargetFind = false;
     fabricCanvas.defaultCursor = 'default';
     fabricCanvas.hoverCursor = 'default';
 
@@ -3742,12 +4055,15 @@ function setActiveTool(tool) {
             fabricCanvas.defaultCursor = 'crosshair';
             fabricCanvas.hoverCursor = 'crosshair';
             break;
-        case 'eraser':
-            fabricCanvas.freeDrawingBrush = eraser.value;
-            fabricCanvas.isDrawingMode = true;
-            fabricCanvas.freeDrawingBrush.width = parseInt(objectStrokeWidthMultiplier.value, 10) * 2 || 1;
-            fabricCanvas.defaultCursor = 'crosshair';
-            fabricCanvas.hoverCursor = 'crosshair';
+
+        case 'hand':
+            // Mão: arrastar move a visualização; objetos ficam intocáveis
+            fabricCanvas.isDrawingMode = false;
+            fabricCanvas.selection = false;
+            fabricCanvas.skipTargetFind = true;
+            fabricCanvas.discardActiveObject();
+            fabricCanvas.defaultCursor = 'grab';
+            fabricCanvas.hoverCursor = 'grab';
             break;
 
         default:
@@ -3770,19 +4086,13 @@ async function addWatermark() {
         return;
     }
 
-    await Promise.all([
-        FabricImage.fromURL(logoSettings.value.url, { crossOrigin: 'anonymous' })
-    ]).then(([watermarkObj]) => {
-        console.log('💧 Watermark image loaded - original dimensions:', watermarkObj.width, 'x', watermarkObj.height);
+    await FabricImage.fromURL(logoSettings.value.url, { crossOrigin: 'anonymous' }).then((watermarkObj) => {
         
         // Calcula escala baseada no drawingArea
         let calculatedScale = 0.2; // fallback
         if (drawingArea.value) {
             const targetWidth = drawingArea.value.width * watermarkWidthPercent;
             calculatedScale = targetWidth / watermarkObj.width;
-            console.log('💧 addWatermark: drawingArea width:', drawingArea.value.width.toFixed(1),
-                        '| target watermark width (20%):', targetWidth.toFixed(1),
-                        '| calculated scale:', calculatedScale.toFixed(3));
         }
 
         watermarkObj.set({
@@ -3798,8 +4108,6 @@ async function addWatermark() {
             objectFit: 'fill', // Estica a imagem para preencher o espaço
         });
         
-        console.log('💧 Watermark after set - scaleX:', watermarkObj.scaleX, 'scaleY:', watermarkObj.scaleY,
-                    '| scaled width:', watermarkObj.getScaledWidth().toFixed(1));
         
         watermark.value = watermarkObj;
         fabricCanvas.add(watermarkObj);
@@ -3822,9 +4130,7 @@ async function toggleWatermark() {
         }
     }
 
-    setTimeout(() => {
-        fabricCanvas.renderAll();
-    }, 1000);
+    fabricCanvas.requestRenderAll();
 }
 
 /**
@@ -3848,9 +4154,6 @@ function updateWatermarkPosition() {
     const targetWidth = drawingAreaWidth * watermarkWidthPercent;
     const newScale = targetWidth / watermark.value.width;
     
-    console.log('💧 updateWatermarkPosition: drawingArea width:', drawingAreaWidth.toFixed(1), 
-                '| target watermark width:', targetWidth.toFixed(1), 
-                '| calculated scale:', newScale.toFixed(3));
     
     // Atualiza a escala da marca d'água
     watermark.value.set({
@@ -3862,7 +4165,6 @@ function updateWatermarkPosition() {
     const watermarkWidth = watermark.value.getScaledWidth();
     const watermarkHeight = watermark.value.getScaledHeight();
     
-    console.log('💧 Watermark scaled width:', watermarkWidth.toFixed(1), 'height:', watermarkHeight.toFixed(1));
 
     let left = 0;
     let top = 0;
@@ -3932,12 +4234,16 @@ function sendObjectToBack() {
     if (activeObject) {
         fabricCanvas.sendObjectToBack(activeObject);
 
-        // first and second images always at the back
+        // Fotos sempre atrás das anotações — e a drawingArea (retângulo branco)
+        // atrás DELAS, senão cobre as duas fotos
         if (firstImage.value) {
             fabricCanvas.sendObjectToBack(firstImage.value);
         }
         if (secondImage.value) {
             fabricCanvas.sendObjectToBack(secondImage.value);
+        }
+        if (drawingArea.value) {
+            fabricCanvas.sendObjectToBack(drawingArea.value);
         }
 
         fabricCanvas.requestRenderAll();
@@ -3965,12 +4271,16 @@ function sendObjectBackwards() {
     if (activeObject) {
         fabricCanvas.sendObjectBackwards(activeObject);
 
-        // first and second images always at the back
+        // Fotos sempre atrás das anotações — e a drawingArea (retângulo branco)
+        // atrás DELAS, senão cobre as duas fotos
         if (firstImage.value) {
             fabricCanvas.sendObjectToBack(firstImage.value);
         }
         if (secondImage.value) {
             fabricCanvas.sendObjectToBack(secondImage.value);
+        }
+        if (drawingArea.value) {
+            fabricCanvas.sendObjectToBack(drawingArea.value);
         }
 
         fabricCanvas.requestRenderAll();
@@ -4007,9 +4317,496 @@ function deleteActiveObject() {
     }
 }
 
-async function toggleCropper() {
-    imageToCrop.value = fabricCanvas.getActiveObject();
-    showCropperModal.value = !showCropperModal.value;
+// === GIRAR / ESPELHAR AS FOTOS PRINCIPAIS ===
+// A transformação é "assada" no pixel (sem perda pra passos de 90° e espelhamento)
+// e vira um blob URL — o src continua uma string curta, mantendo o undo leve.
+
+let bakingImage = false; // evita cliques duplos enquanto processa
+const bakedObjectUrls = []; // revogados no unmount (undo precisa deles vivos na sessão)
+
+async function bakeImageSource(img, { rotate90 = false, flipX = false } = {}) {
+    const source = img._originalElement || img._element;
+    const srcW = source.naturalWidth || source.width;
+    const srcH = source.naturalHeight || source.height;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = rotate90 ? srcH : srcW;
+    canvas.height = rotate90 ? srcW : srcH;
+    const ctx = canvas.getContext('2d');
+
+    if (rotate90) {
+        // 90° horário
+        ctx.translate(canvas.width, 0);
+        ctx.rotate(Math.PI / 2);
+    } else if (flipX) {
+        ctx.translate(srcW, 0);
+        ctx.scale(-1, 1);
+    }
+    ctx.drawImage(source, 0, 0);
+
+    const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(
+            (b) => (b ? resolve(b) : reject(new Error('Falha ao processar a imagem.'))),
+            'image/png',
+        );
+    });
+
+    const url = URL.createObjectURL(blob);
+    bakedObjectUrls.push(url);
+    return url;
+}
+
+function getActiveMainImage() {
+    const obj = fabricCanvas.getActiveObject();
+    if (obj?.type === 'image' && (obj.id === 'firstImage' || obj.id === 'secondImage')) return obj;
+    return null;
+}
+
+async function rotateMainImage() {
+    const img = getActiveMainImage();
+    if (!img || bakingImage || cropMode.value) return;
+    bakingImage = true;
+
+    try {
+        const hadCrop = (img.cropX || 0) > 0 || (img.cropY || 0) > 0 ||
+            img.width < getImageSourceSize(img).width || img.height < getImageSourceSize(img).height;
+
+        const url = await bakeImageSource(img, { rotate90: true });
+        await img.setSrc(url, { crossOrigin: 'anonymous' });
+
+        // Fonte trocou de orientação: recorte anterior não se aplica mais
+        const size = getImageSourceSize(img);
+        img.set({ cropX: 0, cropY: 0, width: size.width, height: size.height });
+        img.applyFilters(); // reaplica brilho/contraste na fonte nova
+
+        // Re-encaixa na metade (contain + centralizada)
+        const clip = img.id === 'firstImage' ? firstClipPath.value : secondClipPath.value;
+        if (clip?.width && clip?.height) {
+            const scale = Math.min(clip.width / size.width, clip.height / size.height);
+            img.set({ scaleX: scale, scaleY: scale, isManuallyMoved: false });
+        }
+        img.setCoords();
+        await updateImagesPosition();
+
+        fabricCanvas.setActiveObject(img);
+
+        // Painel exibe a escala nova (a ref do objeto não muda, então não re-sincroniza sozinho)
+        watchObjectScale.value = false;
+        objectScaleX.value = parseFloat(img.scaleX.toFixed(2));
+        objectScaleY.value = parseFloat(img.scaleY.toFixed(2));
+        nextTick(() => {
+            watchObjectScale.value = true;
+        });
+
+        fabricCanvas.requestRenderAll();
+        saveCanvasState();
+
+        if (hadCrop) showToast('O recorte foi desfeito ao girar a foto.');
+    } catch (error) {
+        console.error('Erro ao girar a foto:', error);
+        showToast('Não foi possível girar a foto. Tente novamente.');
+    } finally {
+        bakingImage = false;
+    }
+}
+
+async function flipMainImage() {
+    const img = getActiveMainImage();
+    if (!img || bakingImage || cropMode.value) return;
+    bakingImage = true;
+
+    try {
+        const prevCrop = {
+            cropX: img.cropX || 0,
+            cropY: img.cropY || 0,
+            width: img.width,
+            height: img.height,
+        };
+
+        const url = await bakeImageSource(img, { flipX: true });
+        await img.setSrc(url, { crossOrigin: 'anonymous' });
+
+        // Espelha a janela de recorte pra manter a mesma região visível (invertida)
+        const size = getImageSourceSize(img);
+        const cropX = Math.min(
+            Math.max(0, size.width - prevCrop.cropX - prevCrop.width),
+            Math.max(0, size.width - 1),
+        );
+        img.set({
+            cropX,
+            cropY: prevCrop.cropY,
+            width: prevCrop.width,
+            height: prevCrop.height,
+        });
+        img.applyFilters(); // reaplica brilho/contraste na fonte nova
+        img.setCoords();
+
+        fabricCanvas.setActiveObject(img);
+        fabricCanvas.requestRenderAll();
+        saveCanvasState();
+    } catch (error) {
+        console.error('Erro ao espelhar a foto:', error);
+        showToast('Não foi possível espelhar a foto. Tente novamente.');
+    } finally {
+        bakingImage = false;
+    }
+}
+
+// === RECORTE INLINE (não-destrutivo) ===
+// Em vez de rasterizar um novo src (que congela a resolução da tela), usa cropX/cropY/
+// width/height do FabricImage: a foto original permanece íntegra na memória, o export
+// renderiza dela em resolução cheia e o recorte pode ser refeito/expandido depois.
+
+/**
+ * Ajusta o viewport para enquadrar um retângulo (coordenadas de mundo) no canvas.
+ */
+function fitViewportToBounds(bounds, marginRatio = 0.92, topOffset = 0) {
+    const cw = fabricCanvas.getWidth();
+    const ch = fabricCanvas.getHeight();
+    if (!bounds.width || !bounds.height) return;
+
+    const zoom = Math.max(0.05, Math.min(cw / bounds.width, (ch - topOffset) / bounds.height) * marginRatio);
+    const cx = bounds.left + bounds.width / 2;
+    const cy = bounds.top + bounds.height / 2;
+
+    fabricCanvas.setViewportTransform([
+        zoom, 0, 0, zoom,
+        cw / 2 - cx * zoom,
+        (ch + topOffset) / 2 - cy * zoom,
+    ]);
+    zoomLevel.value = zoom;
+    fabricCanvas.requestRenderAll();
+}
+
+function getImageSourceSize(img) {
+    if (typeof img.getOriginalSize === 'function') {
+        const size = img.getOriginalSize();
+        if (size?.width && size?.height) return size;
+    }
+    const el = img._originalElement || img._element;
+    return {
+        width: el?.naturalWidth || el?.width || img.width,
+        height: el?.naturalHeight || el?.height || img.height,
+    };
+}
+
+function enterCropMode(image) {
+    const target = image || fabricCanvas.getActiveObject();
+    if (cropMode.value || !target || target.type !== 'image') return;
+    if (target.id !== 'firstImage' && target.id !== 'secondImage') return;
+
+    cropTarget = target;
+    const src = getImageSourceSize(target);
+
+    // Snapshot completo pra cancelar/restaurar
+    cropPrev = {
+        cropX: target.cropX || 0,
+        cropY: target.cropY || 0,
+        width: target.width,
+        height: target.height,
+        left: target.left,
+        top: target.top,
+        scaleX: target.scaleX,
+        scaleY: target.scaleY,
+        clipPath: target.clipPath,
+        zIndex: fabricCanvas.getObjects().indexOf(target),
+        isManuallyMoved: target.isManuallyMoved,
+        viewportTransform: [...fabricCanvas.viewportTransform],
+        zoomLevel: zoomLevel.value,
+        activeTool: activeTool.value,
+    };
+
+    setActiveTool('select');
+    fabricCanvas.discardActiveObject();
+    clearAllHoverStates();
+
+    // Trava tudo que não é o recorte
+    cropInteractivityPrev = fabricCanvas.getObjects().map((obj) => ({
+        obj,
+        selectable: obj.selectable,
+        evented: obj.evented,
+    }));
+    fabricCanvas.getObjects().forEach((obj) => obj.set({ selectable: false, evented: false }));
+    fabricCanvas.selection = false;
+    toggleResizeHandles(false);
+
+    // Região visível hoje (em px da fonte), pra posicionar o retângulo inicial
+    const prevCropX = cropPrev.cropX;
+    const prevCropY = cropPrev.cropY;
+    const hadCrop = prevCropX > 0 || prevCropY > 0 ||
+        cropPrev.width < src.width || cropPrev.height < src.height;
+
+    // Expande a imagem pra mostrar a fonte inteira (o que foi cortado volta a aparecer),
+    // sem o clip de metade, mantendo a região atual exatamente onde estava na tela
+    target.set({
+        left: target.left - prevCropX * target.scaleX,
+        top: target.top - prevCropY * target.scaleY,
+        cropX: 0,
+        cropY: 0,
+        width: src.width,
+        height: src.height,
+        clipPath: null,
+    });
+    target.setCoords();
+    fabricCanvas.bringObjectToFront(target);
+
+    const imgBounds = {
+        left: target.left,
+        top: target.top,
+        width: target.getScaledWidth(),
+        height: target.getScaledHeight(),
+    };
+
+    // Overlay escuro cobrindo a imagem inteira; o clip invertido "fura" a área mantida,
+    // deixando visível o que fica e escurecido o que sai
+    const rectLeft = target.left + prevCropX * target.scaleX;
+    const rectTop = target.top + prevCropY * target.scaleY;
+    const rectWidth = hadCrop ? cropPrev.width * target.scaleX : imgBounds.width;
+    const rectHeight = hadCrop ? cropPrev.height * target.scaleY : imgBounds.height;
+
+    cropRect = new Rect({
+        left: rectLeft,
+        top: rectTop,
+        width: rectWidth,
+        height: rectHeight,
+        fill: 'transparent',
+        stroke: '#ffffff',
+        strokeWidth: 1,
+        strokeUniform: true,
+        strokeDashArray: [6, 4],
+        absolutePositioned: true,
+        lockRotation: true,
+        lockScalingFlip: true,
+        hasBorders: false,
+        selectable: true,
+        evented: true,
+        class: 'crop-chrome',
+        id: 'cropRect',
+    });
+    applyStyleToControls(cropRect);
+    cropRect.set({ hasBorders: false });
+    cropRect.setControlsVisibility({ mtr: false });
+
+    // Véu escuro em 4 faixas ao redor do retângulo (o clipPath invertido do Fabric
+    // se mostrou não-confiável pra isso); atualizado a cada mover/escalar
+    cropOverlay = ['top', 'bottom', 'left', 'right'].map((side) => new Rect({
+        left: 0,
+        top: 0,
+        width: 1,
+        height: 1,
+        fill: 'rgba(0, 0, 0, 0.55)',
+        selectable: false,
+        evented: false,
+        objectCaching: false,
+        strokeWidth: 0,
+        class: 'crop-chrome',
+        id: `cropOverlay-${side}`,
+    }));
+
+    cropOverlay.forEach((band) => fabricCanvas.add(band));
+    fabricCanvas.add(cropRect);
+    cropOverlay.forEach((band) => fabricCanvas.bringObjectToFront(band));
+    fabricCanvas.bringObjectToFront(cropRect);
+    updateCropOverlay();
+    fabricCanvas.setActiveObject(cropRect);
+
+    // Folga extra no topo pra barra flutuante de recorte não cobrir as alças superiores
+    fitViewportToBounds(imgBounds, 0.86, 56);
+
+    cropMode.value = true;
+    fabricCanvas.requestRenderAll();
+}
+
+/**
+ * Reposiciona as 4 faixas escuras ao redor do retângulo de recorte.
+ */
+function updateCropOverlay() {
+    if (!cropOverlay || !cropRect || !cropTarget) return;
+
+    const imgLeft = cropTarget.left;
+    const imgTop = cropTarget.top;
+    const imgWidth = cropTarget.getScaledWidth();
+    const imgHeight = cropTarget.getScaledHeight();
+    const imgRight = imgLeft + imgWidth;
+    const imgBottom = imgTop + imgHeight;
+
+    const rectLeft = cropRect.left;
+    const rectTop = cropRect.top;
+    const rectRight = rectLeft + cropRect.width * cropRect.scaleX;
+    const rectBottom = rectTop + cropRect.height * cropRect.scaleY;
+
+    const [top, bottom, left, right] = cropOverlay;
+
+    top.set({ left: imgLeft, top: imgTop, width: imgWidth, height: Math.max(0, rectTop - imgTop) });
+    bottom.set({ left: imgLeft, top: rectBottom, width: imgWidth, height: Math.max(0, imgBottom - rectBottom) });
+    left.set({ left: imgLeft, top: rectTop, width: Math.max(0, rectLeft - imgLeft), height: Math.max(0, rectBottom - rectTop) });
+    right.set({ left: rectRight, top: rectTop, width: Math.max(0, imgRight - rectRight), height: Math.max(0, rectBottom - rectTop) });
+
+    cropOverlay.forEach((band) => band.setCoords());
+}
+
+/**
+ * Mantém o retângulo de recorte dentro dos limites da imagem durante mover/escalar.
+ * Sem centeredScaling: cada alça mexe só no próprio lado.
+ */
+function constrainCropRect(isScaling) {
+    if (!cropRect || !cropTarget) return;
+
+    const imgLeft = cropTarget.left;
+    const imgTop = cropTarget.top;
+    const imgRight = imgLeft + cropTarget.getScaledWidth();
+    const imgBottom = imgTop + cropTarget.getScaledHeight();
+    const MIN_SIZE = 16;
+
+    let width = cropRect.width * cropRect.scaleX;
+    let height = cropRect.height * cropRect.scaleY;
+    let left = cropRect.left;
+    let top = cropRect.top;
+
+    if (isScaling) {
+        // Alça passou da borda da imagem: prende a borda em movimento
+        if (left < imgLeft) {
+            width -= imgLeft - left;
+            left = imgLeft;
+        }
+        if (top < imgTop) {
+            height -= imgTop - top;
+            top = imgTop;
+        }
+        if (left + width > imgRight) width = imgRight - left;
+        if (top + height > imgBottom) height = imgBottom - top;
+
+        width = Math.max(width, MIN_SIZE);
+        height = Math.max(height, MIN_SIZE);
+
+        cropRect.set({
+            left,
+            top,
+            scaleX: width / cropRect.width,
+            scaleY: height / cropRect.height,
+        });
+    } else {
+        // Movendo: só clampa a posição
+        left = Math.min(Math.max(left, imgLeft), imgRight - width);
+        top = Math.min(Math.max(top, imgTop), imgBottom - height);
+        cropRect.set({ left, top });
+    }
+
+    cropRect.setCoords();
+    updateCropOverlay();
+}
+
+function exitCropMode() {
+    if (cropRect) fabricCanvas.remove(cropRect);
+    if (cropOverlay) cropOverlay.forEach((band) => fabricCanvas.remove(band));
+    cropRect = null;
+    cropOverlay = null;
+
+    cropInteractivityPrev.forEach(({ obj, selectable, evented }) => {
+        obj.set({ selectable, evented });
+    });
+    cropInteractivityPrev = [];
+    fabricCanvas.selection = true;
+    toggleResizeHandles(true);
+
+    fabricCanvas.setViewportTransform(cropPrev.viewportTransform);
+    zoomLevel.value = cropPrev.zoomLevel;
+
+    cropMode.value = false;
+    fabricCanvas.discardActiveObject();
+    fabricCanvas.requestRenderAll();
+}
+
+function cancelCrop() {
+    if (!cropMode.value || !cropTarget) return;
+
+    cropTarget.set({
+        cropX: cropPrev.cropX,
+        cropY: cropPrev.cropY,
+        width: cropPrev.width,
+        height: cropPrev.height,
+        left: cropPrev.left,
+        top: cropPrev.top,
+        scaleX: cropPrev.scaleX,
+        scaleY: cropPrev.scaleY,
+        clipPath: cropPrev.clipPath,
+        isManuallyMoved: cropPrev.isManuallyMoved,
+    });
+    cropTarget.setCoords();
+    fabricCanvas.moveObjectTo(cropTarget, cropPrev.zIndex);
+
+    exitCropMode();
+    cropTarget = null;
+    cropPrev = null;
+}
+
+async function applyCrop() {
+    if (!cropMode.value || !cropTarget || !cropRect) return;
+
+    const target = cropTarget;
+    const src = getImageSourceSize(target);
+
+    // Converte o retângulo (mundo) pra coordenadas da fonte da imagem
+    const rectWidth = cropRect.width * cropRect.scaleX;
+    const rectHeight = cropRect.height * cropRect.scaleY;
+
+    let cropX = Math.round((cropRect.left - target.left) / target.scaleX);
+    let cropY = Math.round((cropRect.top - target.top) / target.scaleY);
+    let cropW = Math.round(rectWidth / target.scaleX);
+    let cropH = Math.round(rectHeight / target.scaleY);
+
+    cropX = Math.min(Math.max(cropX, 0), src.width - 1);
+    cropY = Math.min(Math.max(cropY, 0), src.height - 1);
+    cropW = Math.min(Math.max(cropW, 1), src.width - cropX);
+    cropH = Math.min(Math.max(cropH, 1), src.height - cropY);
+
+    target.set({
+        cropX,
+        cropY,
+        width: cropW,
+        height: cropH,
+        left: cropRect.left,
+        top: cropRect.top,
+        clipPath: cropPrev.clipPath,
+    });
+    target.setCoords();
+    fabricCanvas.moveObjectTo(target, cropPrev.zIndex);
+
+    exitCropMode();
+
+    // Se a foto ainda estava no enquadramento automático, re-encaixa o recorte na
+    // metade dela (contain + centralizada). Se o usuário redimensionou ou moveu a
+    // foto antes de recortar, respeita: o recorte fica do tamanho e na posição em
+    // que aparecia na tela (WYSIWYG).
+    const clip = target.id === 'firstImage' ? firstClipPath.value : secondClipPath.value;
+    const autoFitScale = clip?.width && clip?.height
+        ? Math.min(clip.width / cropPrev.width, clip.height / cropPrev.height)
+        : null;
+    const estavaNoEnquadramentoAutomatico = autoFitScale !== null &&
+        !cropPrev.isManuallyMoved &&
+        Math.abs(cropPrev.scaleX - autoFitScale) / autoFitScale < 0.01;
+
+    if (estavaNoEnquadramentoAutomatico) {
+        const fitScaleValue = Math.min(clip.width / cropW, clip.height / cropH);
+        target.set({
+            scaleX: fitScaleValue,
+            scaleY: fitScaleValue,
+            isManuallyMoved: false,
+        });
+        target.setCoords();
+        await updateImagesPosition();
+    } else {
+        // marca como posicionada manualmente pra redimensionamentos futuros da área
+        // preservarem o offset relativo em vez de recentralizar
+        target.set({ isManuallyMoved: true });
+        target.setCoords();
+    }
+
+    cropTarget = null;
+    cropPrev = null;
+
+    fabricCanvas.requestRenderAll();
+    saveCanvasState();
 }
 
 /**
@@ -4022,10 +4819,8 @@ function getEditorChromeObjects() {
         if (!obj) return false;
         // Bordas/área do editor
         if (obj.id === 'drawingArea') return true;
-        // Handlers de resize do editor
-        if (obj.class === 'resize-handle') return true;
-        // Clones temporários de hover (highlight)
-        if (typeof obj.id === 'string' && obj.id.endsWith('-hover')) return true;
+        // Handlers de resize, cromo do recorte e contorno de hover
+        if (['resize-handle', 'crop-chrome', 'hover-outline'].includes(obj.class)) return true;
         return false;
     });
 }
@@ -4173,6 +4968,12 @@ function hideEditorChromeForExport() {
             fabricCanvas.add(obj);
         });
 
+        // Restaura o z-order: drawingArea (retângulo branco) atrás de tudo,
+        // senão ele cobre as fotos depois do export
+        if (drawingArea.value) {
+            fabricCanvas.sendObjectToBack(drawingArea.value);
+        }
+
         // Restaura propriedades do chrome
         previous.forEach(({ obj, visible, excludeFromExport, opacity }) => {
             obj.set({
@@ -4224,25 +5025,13 @@ function getExportCropRect(drawingAreaObj, insetPx = 0) {
 
     // Inset para remover linhas/halo de 1px (antialias/subpixel) do contorno do editor/clip
     const inset = Math.max(0, Math.floor(insetPx || 0));
-    let left = raw.left + inset;
-    let top = raw.top + inset;
-    let width = raw.width - inset * 2;
-    let height = raw.height - inset * 2;
+    const left = raw.left + inset;
+    const top = raw.top + inset;
+    const width = Math.max(1, raw.width - inset * 2);
+    const height = Math.max(1, raw.height - inset * 2);
 
-    // Evita valores inválidos
-    width = Math.max(1, width);
-    height = Math.max(1, height);
-
-    // Clampa dentro do canvas (evita “vazar” 1px e pegar background)
-    if (fabricCanvas) {
-        const maxW = fabricCanvas.getWidth();
-        const maxH = fabricCanvas.getHeight();
-        left = Math.max(0, Math.min(left, maxW - 1));
-        top = Math.max(0, Math.min(top, maxH - 1));
-        width = Math.min(width, maxW - left);
-        height = Math.min(height, maxH - top);
-    }
-
+    // Sem clamp ao tamanho do canvas na tela: o toCanvasElement renderiza qualquer
+    // região da cena — clampar truncava o export quando a área era maior que a janela
     return { left, top, width, height };
 }
 
@@ -4344,133 +5133,130 @@ async function snapCriticalGeometryForExport() {
     };
 }
 
-async function finishDrawing() {
-    finishing.value = true;
-    if (fabricCanvas && drawingArea) {
-        // Desabilita seleção e interação após finalizar
-        fabricCanvas.selection = false;
-        fabricCanvas.defaultCursor = 'default';
-        fabricCanvas.hoverCursor = 'default';
-        
-        // Desabilita eventos de interação em todos os objetos
-        const allObjects = fabricCanvas.getObjects();
-        allObjects.forEach(obj => {
-            obj.set({
-                selectable: false,
-                evented: false,
-                hoverCursor: 'default',
-            });
-        });
-        
-        if (fabricCanvas.isDrawingMode) {
-            fabricCanvas.isDrawingMode = false;
-            fabricCanvas.requestRenderAll();
-            saveCanvasState();
-        }
+/**
+ * Multiplicador de exportação: dimensiona o resultado pela resolução REAL das fotos
+ * (1/escala da foto mais nítida), não pelo tamanho do canvas na tela — no celular o
+ * canvas é minúsculo e exportar 1:1 da tela gera imagem pixelada.
+ * Aplica teto de dimensão/área: canvas acima de ~16MP (ou lado > 4096px) falha
+ * silenciosamente no Safari iOS, gerando imagem em branco ou crash.
+ */
+function getExportMultiplier(region) {
+    let multiplier = 1;
+    [firstImage.value, secondImage.value].forEach((img) => {
+        if (!img) return;
+        const scale = Math.min(img.scaleX || 1, img.scaleY || 1);
+        if (scale > 0) multiplier = Math.max(multiplier, 1 / scale);
+    });
 
-        // set opacity to 0 for all resize handles
+    const MAX_SIDE = 4096;
+    const MAX_AREA = 16000000;
+    if (region?.width > 0 && region?.height > 0) {
+        multiplier = Math.min(
+            multiplier,
+            MAX_SIDE / Math.max(region.width, region.height),
+            Math.sqrt(MAX_AREA / (region.width * region.height)),
+        );
+    }
+
+    return Math.max(0.1, multiplier);
+}
+
+/**
+ * Renderiza uma região do canvas em Blob JPEG (fundo é sempre branco na exportação,
+ * então não há transparência a preservar — JPEG mantém a resolução com fração do peso do PNG).
+ */
+function canvasRegionToBlob(canvas, region, multiplier, format = 'image/jpeg', quality = 0.92) {
+    return new Promise((resolve, reject) => {
+        let exportCanvas;
+        try {
+            exportCanvas = canvas.toCanvasElement(multiplier, region);
+        } catch (error) {
+            reject(error);
+            return;
+        }
+        exportCanvas.toBlob(
+            (blob) => {
+                if (blob) resolve(blob);
+                else reject(new Error('Falha ao converter o canvas em imagem.'));
+            },
+            format,
+            quality,
+        );
+    });
+}
+
+async function finishDrawing() {
+    if (!fabricCanvas || !drawingArea.value || finishing.value) return;
+    if (cropMode.value) {
+        showToast('Aplique ou cancele o recorte antes de finalizar.');
+        return;
+    }
+    finishing.value = true;
+
+    // Guarda a interatividade atual pra restaurar depois da exportação
+    const interactivityPrev = fabricCanvas.getObjects().map((obj) => ({
+        obj,
+        selectable: obj.selectable,
+        evented: obj.evented,
+        hoverCursor: obj.hoverCursor,
+    }));
+    const origVptTransform = [...fabricCanvas.viewportTransform];
+    let restoreBackground = () => {};
+    let restoreSnapping = () => {};
+    let restoreChrome = () => {};
+
+    try {
+        if (fabricCanvas.isDrawingMode) fabricCanvas.isDrawingMode = false;
+        fabricCanvas.discardActiveObject();
+        clearAllHoverStates();
+
+        fabricCanvas.getObjects().forEach((obj) => {
+            obj.set({ selectable: false, evented: false, hoverCursor: 'default' });
+        });
         toggleResizeHandles(false);
 
-        if(showWatermark.value && watermark.value) {
-            const watermark = fabricCanvas.getObjects().find(obj => obj.id === 'watermark');
-            if (watermark) {
-                watermark.set({
-                    visible: true,
-                    excludeFromExport: false,
-                });
-                fabricCanvas.bringObjectToFront(watermark);
-            }
-        }
-
-        fabricCanvas.requestRenderAll();
-
-        // Limpa seleção e estados de hover (não faz parte do resultado)
-        clearAllHoverStates();
-        fabricCanvas.discardActiveObject();
-        fabricCanvas.requestRenderAll();
-
-        const origVptTransform = Object.assign(
-            [],
-            fabricCanvas.viewportTransform
-        );
-        fabricCanvas.viewportTransform = [1, 0, 0, 1, 0, 0];
-        fabricCanvas.setViewportTransform(fabricCanvas.viewportTransform);
-
-        // bring watermark to front
-        if (watermark.value) {
+        if (showWatermark.value && watermark.value) {
+            watermark.value.set({ visible: true, excludeFromExport: false });
             fabricCanvas.bringObjectToFront(watermark.value);
         }
 
-        // Fundo branco durante exportação para não vazar o cinza do canvas (#F1F5F9)
-        const restoreBackground = setCanvasBackgroundForExport('#FFFFFF');
-
-        // Alinha geometria crítica em pixel-grid (evita linhas finas no topo/baixo)
-        const restoreSnapping = await snapCriticalGeometryForExport();
-
-        // IMPORTANT: esconde apenas o cromo do editor durante a exportação
-        const restoreChrome = hideEditorChromeForExport();
-
-        fabricCanvas.requestRenderAll();
-
-        // Dupla verificação: lista todos os objetos para debug
-        const allObjsIds = fabricCanvas.getObjects().map(o => ({ id: o.id, type: o.type, class: o.class }));
-        console.log('🔍 Objects before export:', allObjsIds);
-        
-        // Verifica se ainda há hover escapando
-        const remainingHovers = fabricCanvas.getObjects().filter(o => 
-            o?.id && typeof o.id === 'string' && o.id.includes('-hover')
-        );
-        if (remainingHovers.length > 0) {
-            console.warn('⚠️ Found remaining hover objects:', remainingHovers.map(o => o.id));
-            remainingHovers.forEach(obj => fabricCanvas.remove(obj));
-            fabricCanvas.requestRenderAll();
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 1000)); // Esperamos um segundo para garantir que o canvas foi redesenhado
-
-        // log check if watermark is visible
-        if (showWatermark.value && watermark.value) {
-            const watermark = fabricCanvas.getObjects().find(obj => obj.id === 'watermark');
-            console.log('Watermark visibility on export:', watermark ? watermark.visible : 'not found');
-        }
-
-        // Recorta exatamente a área do drawingArea (agora alinhada em pixel-grid)
-        const crop = getExportCropRect(drawingArea.value, 0);
-        // Multiplicador para restaurar a resolução original (equipara qualidade entre desktop e mobile)
-        const exportMultiplier = Math.max(1, 1 / (fitScale.value || 1));
-        const data = await new Promise((resolve, reject) => {
-            fabricCanvas
-                .toCanvasElement(exportMultiplier, crop)
-                .toBlob(
-                    (blob) => {
-                        if (blob) resolve(blob);
-                        else reject("Houve um erro ao gerar a imagem.");
-                    },
-                    "image/png",
-                    1
-                );
-        });
-
-        // reseta o viewport para o original
-        fabricCanvas.viewportTransform = origVptTransform;
+        fabricCanvas.viewportTransform = [1, 0, 0, 1, 0, 0];
         fabricCanvas.setViewportTransform(fabricCanvas.viewportTransform);
+
+        // Fundo branco durante exportação para não vazar o cinza do canvas (#F1F5F9)
+        restoreBackground = setCanvasBackgroundForExport('#FFFFFF');
+        // Alinha geometria crítica em pixel-grid (evita linhas finas no topo/baixo)
+        restoreSnapping = await snapCriticalGeometryForExport();
+        // Esconde apenas o cromo do editor durante a exportação
+        restoreChrome = hideEditorChromeForExport();
+
         fabricCanvas.renderAll();
 
-        // Restaura o cromo do editor após exportar
+        // Recorta exatamente a área do drawingArea (alinhada em pixel-grid)
+        const crop = getExportCropRect(drawingArea.value, 0);
+        const multiplier = getExportMultiplier(crop);
+
+        const data = await canvasRegionToBlob(fabricCanvas, crop, multiplier);
+
+        emit('finished', data);
+        return data;
+    } catch (error) {
+        console.error('Erro ao gerar a imagem final:', error);
+        showToast('Não foi possível gerar a imagem. Tente novamente.');
+    } finally {
         restoreChrome();
         restoreSnapping();
         restoreBackground();
 
-        emit('finished', data);
+        fabricCanvas.viewportTransform = origVptTransform;
+        fabricCanvas.setViewportTransform(origVptTransform);
 
-        // após exportar, o editor pode continuar visível normalmente
+        interactivityPrev.forEach(({ obj, selectable, evented, hoverCursor }) => {
+            obj.set({ selectable, evented, hoverCursor });
+        });
+        toggleResizeHandles(true);
         fabricCanvas.requestRenderAll();
-
-        setTimeout(() => {
-            finishing.value = false;
-            toggleResizeHandles(true);
-            return data;
-        }, 100);
+        finishing.value = false;
     }
 }
 
@@ -4486,127 +5272,6 @@ async function toggleResizeHandles(show) {
     });
 
     fabricCanvas.requestRenderAll();
-}
-
-async function compareImages() {
-    if (fabricCanvas && firstImage.value && secondImage.value) {
-        
-        // Salva o viewport transform original
-        const origVptTransform = Object.assign(
-            [],
-            fabricCanvas.viewportTransform
-        );
-        
-        // Reseta o viewport para capturar as imagens sem transformação
-        fabricCanvas.viewportTransform = [1, 0, 0, 1, 0, 0];
-        fabricCanvas.setViewportTransform(fabricCanvas.viewportTransform);
-        fabricCanvas.requestRenderAll();
-
-        // Criar uma imagem da firstImage cortada pelo clipPath
-        const objects = fabricCanvas.getObjects();
-        const fiClone = await objects.find(obj => obj.id === 'firstImage').clone();
-        const siClone = await objects.find(obj => obj.id === 'secondImage').clone();
-
-        // Multiplicador para restaurar a resolução original (equipara qualidade entre desktop e mobile)
-        const exportMultiplier = Math.max(1, 1 / (fitScale.value || 1));
-
-        const firstImageDataUrl = await new Promise( async (resolve, reject) => {
-            
-            const clipPath = fiClone.clipPath;
-            const tempCanvas = new Canvas(null, {
-                width: clipPath.width,
-                height: clipPath.height,
-            });
-            
-            // Com absolutePositioned: true, o clipPath tem coordenadas absolutas ao canvas
-            // Precisamos calcular a posição da imagem relativa ao clipPath
-            // A nova posição será: onde a imagem estava - onde o clipPath estava
-            const newLeft = fiClone.left - clipPath.left;
-            const newTop = fiClone.top - clipPath.top;
-            
-            // Remove o clipPath e posiciona a imagem no canvas temporário
-            fiClone.set({
-                left: newLeft,
-                top: newTop,
-                clipPath: null,
-            });
-            
-            tempCanvas.add(fiClone);
-            tempCanvas.requestRenderAll();
-            // tempCanvas.toDataURL({
-            //     format: 'png',
-            //     quality: 1,
-            //     multiplier: 1,
-            // }, (dataUrl) => {
-            //     tempCanvas.dispose();
-            //     resolve(dataUrl);
-            // });
-
-            tempCanvas.toCanvasElement(exportMultiplier, {
-                width: clipPath.width,
-                height: clipPath.height,
-            })
-            .toBlob(
-                (blob) => {
-                    if (blob) resolve(blob);
-                    else reject("Houve um erro ao gerar a imagem.");
-                },
-                "image/png",
-                1
-            );
-
-        });
-        
-
-        // Criar uma imagem da secondImage cortada pelo clipPath
-        const secondImageDataUrl = await new Promise((resolve, reject) => {
-            const clipPath = siClone.clipPath;
-            const tempCanvas = new Canvas(null, {
-                width: clipPath.width,
-                height: clipPath.height,
-            });
-            
-            // Com absolutePositioned: true, o clipPath tem coordenadas absolutas ao canvas
-            // Precisamos calcular a posição da imagem relativa ao clipPath
-            // A nova posição será: onde a imagem estava - onde o clipPath estava
-            const newLeft = siClone.left - clipPath.left;
-            const newTop = siClone.top - clipPath.top;
-            
-            // Remove o clipPath e posiciona a imagem no canvas temporário
-            siClone.set({
-                left: newLeft,
-                top: newTop,
-                clipPath: null,
-            });
-
-            tempCanvas.add(siClone);
-            tempCanvas.requestRenderAll();
-
-            tempCanvas.toCanvasElement(exportMultiplier, {
-                width: clipPath.width,
-                height: clipPath.height,
-            })
-            .toBlob(
-                (blob) => {
-                    if (blob) resolve(blob);
-                    else reject("Houve um erro ao gerar a imagem.");
-                },
-                "image/png",
-                1
-            );
-        });
-
-        // Reseta o viewport para o original
-        fabricCanvas.viewportTransform = origVptTransform;
-        fabricCanvas.setViewportTransform(fabricCanvas.viewportTransform);
-        fabricCanvas.requestRenderAll();
-
-        // Armazena as URLs nas variáveis reativas para uso no componente Compare
-        imagesToCompare.value.first = firstImageDataUrl;
-        imagesToCompare.value.second = secondImageDataUrl;
-
-        showCompareModal.value = true;
-    }
 }
 
 // Exposição de métodos para uso externo
@@ -4633,10 +5298,26 @@ defineExpose({
    fique encapsulado e não vaze para o resto da página. */
 @import "@/assets/main.css";
 
+.fade-enter-active,
+.fade-leave-active {
+    transition: opacity 0.25s ease;
+}
 
-/* .canvas-container {
-    width: 100% !important;
-    height: 100% !important;
-    position: relative;
-} */
+.fade-enter-from,
+.fade-leave-to {
+    opacity: 0;
+}
+
+/* Fundo quadriculado do entorno do canvas em CSS puro — a imagem que fazia esse
+   papel ia inlinada em base64 e pesava ~170KB dentro do CSS do bundle */
+.canvas-backdrop {
+    background-color: #edf0f4;
+    background-image:
+        linear-gradient(45deg, #e3e7ec 25%, transparent 25%),
+        linear-gradient(-45deg, #e3e7ec 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #e3e7ec 75%),
+        linear-gradient(-45deg, transparent 75%, #e3e7ec 75%);
+    background-size: 28px 28px;
+    background-position: 0 0, 0 14px, 14px -14px, -14px 0;
+}
 </style>

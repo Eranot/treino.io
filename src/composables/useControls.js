@@ -1,12 +1,10 @@
-import { ref } from 'vue';
 import useCommonStore from '@/stores/common.js';
 
 
 // Aplica estilos personalizados aos controles de transformação dos objetos
 function applyStyleToControls(...objects) {
     const commonStore = useCommonStore();
-    console.log(commonStore);
-    
+
     const brandColor = commonStore.brandColor;
     objects.forEach(obj => {
         if (!obj) return;
@@ -15,6 +13,7 @@ function applyStyleToControls(...objects) {
             cornerColor: brandColor,
             cornerStyle: 'circle',
             cornerSize: 10,
+            touchCornerSize: 28, // área de toque maior pras alças no celular
             transparentCorners: false,
             hasControls: true,
             hasBorders: true

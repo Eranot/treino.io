@@ -11,7 +11,7 @@
                 <iconify-icon icon="mdi:palette-outline" class="flex items-center justify-center h-6 w-6 text-base text-black"></iconify-icon>
             </button>
             <button
-                ref="toggleColorSelector"
+                ref="transparentColorButton"
                 class="w-6 h-6 m-0.5 cursor-pointer border border-slate-300 flex items-center justify-center bg-gradient-to-br bg-slate-200 rounded-full focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-primary-500 hover:ring-2 hover:ring-offset-1 hover:ring-primary-500"
                 @click="setNullColor()"
                 title="Transparente"
@@ -28,11 +28,14 @@
                 @click="selectColor(color)"
             ></button>
         </div>
+        <!-- Popup ao lado do painel no desktop; no bottom sheet mobile expande no fluxo
+             (posicionamento absoluto seria cortado pelo overflow do sheet) -->
         <div
             v-show="showSelector"
             ref="colorSelectorPopup"
-            class="absolute opacity-0 top-1/2 -translate-y-1/2 right-44 min-w-full p-4 bg-white border border-gray-300 rounded shadow-lg z-10 transition-all duration-300"
-            :class="{ 'opacity-100 right-56!': showSelector }"
+            class="p-4 bg-white z-10
+                sm:absolute sm:top-1/2 sm:-translate-y-1/2 sm:right-56 sm:min-w-full sm:border sm:border-gray-300 sm:rounded sm:shadow-lg
+                max-sm:static max-sm:mt-2 max-sm:w-full max-sm:border max-sm:border-gray-200 max-sm:rounded"
         >
             <div class="mb-4 flex gap-2">
                 <div>
@@ -134,6 +137,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'colorSelected'])
 
 const toggleColorSelector = ref(null)
+const transparentColorButton = ref(null)
 const colorSelectorPopup = ref(null)
 
 // State
@@ -258,17 +262,15 @@ function handleClickOutside(event) {
   // Usar composedPath para obter todos os elementos no caminho do evento
   const path = event.composedPath()
   
-  // Verificar se algum elemento no path é o botão toggle ou o popup
-  const isToggleClick = path.some(element => 
-    element === toggleColorSelector.value
-  )
-  
-  const isPopupClick = path.some(element => 
+  // Verificar se algum elemento no path é um dos botões ou o popup
+  const isOwnClick = path.some(element =>
+    element === toggleColorSelector.value ||
+    element === transparentColorButton.value ||
     element === colorSelectorPopup.value
   )
-  
-  // Se clicou no toggle ou no popup, não fecha
-  if (isToggleClick || isPopupClick) {
+
+  // Se clicou nos controles do próprio seletor, não fecha
+  if (isOwnClick) {
     return
   }
   
