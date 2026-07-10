@@ -4325,22 +4325,18 @@ let bakingImage = false; // evita cliques duplos enquanto processa
 const bakedObjectUrls = []; // revogados no unmount (undo precisa deles vivos na sessão)
 
 /**
- * Assa a REGIÃO VISÍVEL da foto (respeitando o recorte atual) com rotação ou
- * espelhamento aplicados no pixel. Operar sobre o que está visível torna a
- * preservação do recorte correta por construção — sem remapear coordenadas.
+ * Assa a fonte COMPLETA da foto (não a região recortada) com rotação ou
+ * espelhamento aplicados no pixel — o recorte é remapeado depois pelas funções
+ * de girar/espelhar. Manter a fonte inteira preserva o re-crop expansível.
  */
 async function bakeImageSource(img, { rotate90 = false, flipX = false } = {}) {
     const source = img._originalElement || img._element;
-
-    // Janela visível em px da fonte (recorte atual; foto inteira se não houver)
-    const cropX = img.cropX || 0;
-    const cropY = img.cropY || 0;
-    const viewW = Math.max(1, Math.round(img.width));
-    const viewH = Math.max(1, Math.round(img.height));
+    const srcW = source.naturalWidth || source.width;
+    const srcH = source.naturalHeight || source.height;
 
     const canvas = document.createElement('canvas');
-    canvas.width = rotate90 ? viewH : viewW;
-    canvas.height = rotate90 ? viewW : viewH;
+    canvas.width = rotate90 ? srcH : srcW;
+    canvas.height = rotate90 ? srcW : srcH;
     const ctx = canvas.getContext('2d');
 
     if (rotate90) {
@@ -4348,10 +4344,10 @@ async function bakeImageSource(img, { rotate90 = false, flipX = false } = {}) {
         ctx.translate(canvas.width, 0);
         ctx.rotate(Math.PI / 2);
     } else if (flipX) {
-        ctx.translate(viewW, 0);
+        ctx.translate(srcW, 0);
         ctx.scale(-1, 1);
     }
-    ctx.drawImage(source, cropX, cropY, viewW, viewH, 0, 0, viewW, viewH);
+    ctx.drawImage(source, 0, 0);
 
     const blob = await new Promise((resolve, reject) => {
         canvas.toBlob(
@@ -4382,11 +4378,22 @@ async function rotateMainImage() {
         const prevH = img.height;
         const prevScale = img.scaleX;
 
+        // Dimensões da fonte ANTES do giro (pra remapear o recorte)
+        const src = getImageSourceSize(img);
+        const prevCropX = img.cropX || 0;
+        const prevCropY = img.cropY || 0;
+
         const url = await bakeImageSource(img, { rotate90: true });
         await img.setSrc(url, { crossOrigin: 'anonymous' });
 
-        // A fonte nova JÁ é a região visível girada: recorte zerado, dimensões trocadas
-        img.set({ cropX: 0, cropY: 0, width: prevH, height: prevW });
+        // Remapeia a janela de recorte pra fonte girada 90° horário:
+        // (x, y, w, h) numa fonte W×H vira (H - y - h, x, h, w) na fonte H×W
+        img.set({
+            cropX: Math.max(0, Math.min(Math.round(src.height - prevCropY - prevH), src.height - 1)),
+            cropY: Math.max(0, Math.min(Math.round(prevCropX), src.width - 1)),
+            width: prevH,
+            height: prevW,
+        });
         img.applyFilters(); // reaplica brilho/contraste na fonte nova
 
         // Mesma regra do recorte: só re-encaixa na metade se estava no enquadramento
@@ -4435,12 +4442,20 @@ async function flipMainImage() {
     try {
         const prevW = img.width;
         const prevH = img.height;
+        const prevCropX = img.cropX || 0;
+        const prevCropY = img.cropY || 0;
+        const src = getImageSourceSize(img);
 
         const url = await bakeImageSource(img, { flipX: true });
         await img.setSrc(url, { crossOrigin: 'anonymous' });
 
-        // A fonte nova JÁ é a região visível espelhada: recorte zerado, dimensões iguais
-        img.set({ cropX: 0, cropY: 0, width: prevW, height: prevH });
+        // Espelha a janela de recorte: a mesma região continua visível (invertida)
+        img.set({
+            cropX: Math.max(0, Math.min(Math.round(src.width - prevCropX - prevW), src.width - 1)),
+            cropY: prevCropY,
+            width: prevW,
+            height: prevH,
+        });
         img.applyFilters(); // reaplica brilho/contraste na fonte nova
         img.setCoords();
 
