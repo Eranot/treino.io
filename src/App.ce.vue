@@ -322,6 +322,19 @@
                         <input type="range"
                             class="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer range-sm [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-[12px] [&::-webkit-slider-thumb]:w-[12px] [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary-500"
                             min="0" max="1" step="0.05" v-model="objectOpacity">
+                        <div class="flex items-center justify-between text-xs">
+                            <div>Rotação:</div>
+                            <div class="flex items-center gap-1">
+                                <input type="number" :value="objectAngle" step="1"
+                                    class="w-14 bg-slate-100 rounded h-6 text-center border border-slate-200 p-1"
+                                    @input="objectAngleChangedInput($event)" />
+                                <button v-if="objectAngle !== 0" title="Endireitar a foto"
+                                    class="h-6 px-1.5 flex items-center justify-center border border-slate-200 rounded transition-colors hover:bg-slate-200"
+                                    @click="setObjectAngle(0)">
+                                    0°
+                                </button>
+                            </div>
+                        </div>
                         <button v-if="imageBrightness !== 0 || imageContrast !== 0 || parseFloat(objectOpacity) < 1"
                             class="h-7 w-full flex items-center justify-center border border-slate-200 rounded text-xs transition-colors hover:bg-slate-200"
                             @click="resetImageAdjustments()">
@@ -781,6 +794,7 @@ const activeObject = shallowRef(); // objeto do Fabric — ver nota do shallowRe
 const objectScaleX = ref(1);
 const objectScaleY = ref(1);
 const objectUniformScale = ref(true); // Escala uniforme (X e Y juntos)
+const objectAngle = ref(0); // Rotação (graus) da foto selecionada, refletida no painel
 const objectOpacity = ref(1);
 
 const watchObjectScale = ref(true);
@@ -791,6 +805,9 @@ const redoStack = ref([]);
 const maxHistorySize = 50; // Limite de ações no histórico
 let isRestoring = false; // Flag para evitar que o estado seja salvo durante uma restauração
 let isDrawingAreaUpdating = false; // Flag para evitar loops entre input e redimensionamento manual
+let isResizeHandleDragging = false; // Arrasto de um handle da área em andamento
+let resizeHandleDragRatio = 0; // Proporção (largura/altura) da área no início do arrasto
+let pendingAreaCenter = null; // Centro novo da área, aplicado junto com as dimensões (resize ancorado num lado)
 
 const displayMode = ref('ltr'); // 'ltr' (left-to-right) ou 'ttb' (top-to-bottom)
 const activeTool = ref(); // Ferramenta ativa (ex: 'draw', 'select', 'hand', etc.)
@@ -819,14 +836,14 @@ const imageContrast = ref(0);   // -0.5 .. 0.5
 let syncingImageAdjust = false;
 let imageAdjustTimeout = null;
 
-const handlersColor = '#d1d5d9';
-const handlersColorOver = '#c0c4c8';
 const cornerHandlersColor = '#b4c3d8';
 const cornerHandlersColorOver = '#8494ab';
 
 // Handlers dos cantos para redimensionamento diagonal
 const cornerHandleSize = 50; // Tamanho do L
 const cornerThickness = 10; // Espessura da linha do L
+const pillLength = 56; // Comprimento da pílula do meio de cada lado
+const minAreaSide = 80; // Menor lado permitido ao redimensionar pelos handles
 
 // Variáveis para a ferramenta de desenho de formas
 const isDrawingRect = ref(false);
@@ -933,6 +950,7 @@ watch(activeObject, (newObj) => {
         objectScaleX.value = parseFloat(newObj.scaleX?.toFixed(2));
         objectScaleY.value = parseFloat(newObj.scaleY?.toFixed(2));
         objectOpacity.value = parseFloat(newObj?.opacity)?.toFixed(2);
+        objectAngle.value = Math.round(newObj.angle || 0);
 
         // Sliders de ajuste refletem os filtros da foto selecionada
         if (newObj.type === 'image' && (newObj.id === 'firstImage' || newObj.id === 'secondImage')) {
@@ -1286,6 +1304,27 @@ function objectScaleChangedInput(event, axis) {
     }
 }
 
+/**
+ * Aplica um ângulo à foto selecionada girando em torno do centro (rotate preserva
+ * o centro, diferente de set({angle}) que gira em volta da origem).
+ */
+function setObjectAngle(value) {
+    const obj = activeObject.value;
+    if (!obj || (obj.id !== 'firstImage' && obj.id !== 'secondImage')) return;
+
+    obj.rotate(value);
+    obj.setCoords();
+    objectAngle.value = Math.round(value);
+    fabricCanvas.requestRenderAll();
+    saveCanvasState();
+}
+
+function objectAngleChangedInput(event) {
+    const value = parseFloat(event.target.value);
+    if (isNaN(value)) return;
+    setObjectAngle(value);
+}
+
 async function addDrawingArea() {
     if (!firstClipPath.value || !secondClipPath.value) return;
 
@@ -1483,10 +1522,9 @@ async function updateImagesPosition(oldSize = null) {
         const newCenterY = clipTop + clipH / 2;
 
         // // Se a imagem nunca foi movida manualmente ou não temos tamanho antigo, centraliza
+        // (setPositionByOrigin posiciona pelo centro real, correto mesmo com rotação)
         if (!oldSize || !img.isManuallyMoved) {
-            const left = newCenterX - img.getScaledWidth() / 2;
-            const top = newCenterY - img.getScaledHeight() / 2;
-            img.set({ left, top });
+            img.setPositionByOrigin(new Point(newCenterX, newCenterY), 'center', 'center');
             img.setCoords();
             return;
         }
@@ -1497,8 +1535,9 @@ async function updateImagesPosition(oldSize = null) {
 
         const oldDAW = oldSize.width;
         const oldDAH = oldSize.height;
-        const oldDALeft = da.left - oldDAW / 2;
-        const oldDATop = da.top - oldDAH / 2;
+        // Usa o centro antigo quando disponível: no resize ancorado o centro muda
+        const oldDALeft = (oldSize.left ?? da.left) - oldDAW / 2;
+        const oldDATop = (oldSize.top ?? da.top) - oldDAH / 2;
 
         let oldClipW, oldClipH, oldClipLeft, oldClipTop;
 
@@ -1519,9 +1558,10 @@ async function updateImagesPosition(oldSize = null) {
         const oldClipCenterX = oldClipLeft + oldClipW / 2;
         const oldClipCenterY = oldClipTop + oldClipH / 2;
 
-        // Centro atual da imagem (antes de reposicionar)
-        const imgCenterX = img.left + img.getScaledWidth() / 2;
-        const imgCenterY = img.top + img.getScaledHeight() / 2;
+        // Centro atual da imagem (antes de reposicionar; getCenterPoint considera rotação)
+        const imgCenter = img.getCenterPoint();
+        const imgCenterX = imgCenter.x;
+        const imgCenterY = imgCenter.y;
 
         // Offset relativo normalizado em relação ao clip antigo
         const dxNorm = (imgCenterX - oldClipCenterX) / (oldClipW / 2 || 1);
@@ -1534,9 +1574,7 @@ async function updateImagesPosition(oldSize = null) {
         const finalCenterX = newCenterX + dx;
         const finalCenterY = newCenterY + dy;
 
-        const left = finalCenterX - img.getScaledWidth() / 2;
-        const top = finalCenterY - img.getScaledHeight() / 2;
-        img.set({ left, top });
+        img.setPositionByOrigin(new Point(finalCenterX, finalCenterY), 'center', 'center');
         img.setCoords();
     };
 
@@ -1601,19 +1639,24 @@ async function updateDrawingAreaDimensions(oldValues, newValues) {
         return;
     }
 
-    // Captura tamanho antigo para preservar posição relativa das imagens movidas
+    // Captura tamanho e centro antigos para preservar posição relativa das imagens movidas
     const oldSize = {
         width: parseInt(oldValues?.[0]) || drawingArea.value.width,
         height: parseInt(oldValues?.[1]) || drawingArea.value.height,
+        left: drawingArea.value.left,
+        top: drawingArea.value.top,
     };
 
-    // Atualiza as dimensões da área de desenho
+    // Atualiza as dimensões da área de desenho — e o centro, quando o resize é
+    // ancorado (pílula do meio move só um dos lados)
     drawingArea.value.set({
         width: newWidth,
         height: newHeight,
         scaleX: 1,
-        scaleY: 1
+        scaleY: 1,
+        ...(pendingAreaCenter ? { left: pendingAreaCenter.x, top: pendingAreaCenter.y } : {}),
     });
+    pendingAreaCenter = null;
     drawingArea.value.setCoords();
 
     // Redimensiona os clipPaths para seguir o drawingArea
@@ -1625,8 +1668,12 @@ async function updateDrawingAreaDimensions(oldValues, newValues) {
     // Atualiza a posição da watermark
     updateWatermarkPosition();
 
-    // Reposiciona os handles nas novas bordas da área
-    addDrawingAreaHandlers();
+    // Reposiciona os handles nas novas bordas da área. Durante o arrasto de um
+    // handle isso NÃO pode rodar: recriar os handles removeria o que está sob o
+    // mouse e mataria o arrasto (o object:moving já os mantém no lugar)
+    if (!isResizeHandleDragging) {
+        addDrawingAreaHandlers();
+    }
 
     isDrawingAreaUpdating = false;
 }
@@ -1969,6 +2016,10 @@ function setupCanvasStateListeners() {
             objectScaleX.value = obj.scaleX.toFixed(2);
             objectScaleY.value = obj.scaleY.toFixed(2);
         },
+        'object:rotating': (e) => {
+            // Painel reflete o ângulo em tempo real durante o arrasto da alça
+            if (e.target) objectAngle.value = Math.round(e.target.angle || 0);
+        },
     });
 }
 
@@ -2310,7 +2361,7 @@ function addDrawingAreaHandlers() {
     }
 
     const commonProps = {
-        fill: handlersColor,
+        fill: cornerHandlersColor,
         strokeWidth: 1,
         stroke: 'transparent',
         originX: 'center',
@@ -2322,46 +2373,54 @@ function addDrawingAreaHandlers() {
         padding: 2,
     };
 
-    const leftHandle = new Rect({
+    // Pílulas no meio de cada lado: arrastar move SÓ aquela borda (a oposta
+    // fica ancorada), diferente dos cantos, que redimensionam pelo centro
+    const pillProps = {
         ...commonProps,
+        rx: cornerThickness / 2,
+        ry: cornerThickness / 2,
+        padding: 6,
+    };
+
+    const leftHandle = new Rect({
+        ...pillProps,
         left: drawingArea.value.left - drawingArea.value.width / 2,
         top: drawingArea.value.top,
-        width: 10,
-        height: drawingArea.value.height - 90,
+        width: cornerThickness,
+        height: pillLength,
         id: 'leftHandle',
         lockMovementY: true,
         hoverCursor: 'ew-resize',
     });
 
     const rightHandle = new Rect({
-        ...commonProps,
+        ...pillProps,
         left: drawingArea.value.left + drawingArea.value.width / 2,
         top: drawingArea.value.top,
-        width: 10,
-        height: drawingArea.value.height - 90,
+        width: cornerThickness,
+        height: pillLength,
         id: 'rightHandle',
-        class: 'resize-handle',
         lockMovementY: true,
         hoverCursor: 'ew-resize',
     });
 
     const topHandle = new Rect({
-        ...commonProps,
+        ...pillProps,
         left: drawingArea.value.left,
         top: drawingArea.value.top - drawingArea.value.height / 2,
-        width: drawingArea.value.width - 90,
-        height: 10,
+        width: pillLength,
+        height: cornerThickness,
         id: 'topHandle',
         lockMovementX: true,
         hoverCursor: 'ns-resize',
     });
 
     const bottomHandle = new Rect({
-        ...commonProps,
+        ...pillProps,
         left: drawingArea.value.left,
         top: drawingArea.value.top + drawingArea.value.height / 2,
-        width: drawingArea.value.width - 90,
-        height: 10,
+        width: pillLength,
+        height: cornerThickness,
         id: 'bottomHandle',
         lockMovementX: true,
         hoverCursor: 'ns-resize',
@@ -2439,6 +2498,30 @@ function addDrawingAreaHandlers() {
     fabricCanvas.add(topRightHandle);
     fabricCanvas.add(bottomLeftHandle);
     fabricCanvas.add(bottomRightHandle);
+}
+
+/**
+ * Reposiciona os handles existentes nas bordas da área dada (centro + dimensões),
+ * sem recriar nada — usado durante o arrasto, quando recriar removeria o handle
+ * sob o mouse e mataria o drag.
+ */
+function positionAreaHandles({ cx, cy, width, height, skip = null }) {
+    const cornerOffset = cornerHandleSize / 2 - cornerThickness / 2;
+    const positions = {
+        leftHandle: { left: cx - width / 2, top: cy },
+        rightHandle: { left: cx + width / 2, top: cy },
+        topHandle: { left: cx, top: cy - height / 2 },
+        bottomHandle: { left: cx, top: cy + height / 2 },
+        topLeftHandle: { left: cx - (width / 2 - cornerOffset), top: cy - (height / 2 - cornerOffset) },
+        topRightHandle: { left: cx + (width / 2 - cornerOffset), top: cy - (height / 2 - cornerOffset) },
+        bottomLeftHandle: { left: cx - (width / 2 - cornerOffset), top: cy + (height / 2 - cornerOffset) },
+        bottomRightHandle: { left: cx + (width / 2 - cornerOffset), top: cy + (height / 2 - cornerOffset) },
+    };
+    fabricCanvas.getObjects().forEach((o) => {
+        if (o.class !== 'resize-handle' || o === skip || !positions[o.id]) return;
+        o.set(positions[o.id]);
+        o.setCoords();
+    });
 }
 
 /**
@@ -2785,11 +2868,7 @@ function clearAllHoverStates() {
             fabricCanvas.remove(obj);
         } else if (obj.class === 'resize-handle') {
             // Reseta a cor dos handlers de resize
-            if (['topLeftHandle', 'topRightHandle', 'bottomLeftHandle', 'bottomRightHandle'].includes(obj.id)) {
-                obj.set('fill', cornerHandlersColor);
-            } else {
-                obj.set('fill', handlersColor);
-            }
+            obj.set('fill', cornerHandlersColor);
         }
     });
     fabricCanvas.requestRenderAll();
@@ -3313,6 +3392,15 @@ function setupFabricEvents() {
     });
 
     fabricCanvas.on('mouse:up', function () {
+        // Fim do arrasto de um handle da área: agora sim recria os handles
+        // alinhados na geometria final (durante o arrasto isso fica bloqueado)
+        if (isResizeHandleDragging) {
+            isResizeHandleDragging = false;
+            fabricCanvas.discardActiveObject();
+            addDrawingAreaHandlers();
+            fabricCanvas.requestRenderAll();
+        }
+
         if (isDragging) {
             fabricCanvas.setViewportTransform(fabricCanvas.viewportTransform);
             isDragging = false;
@@ -3391,11 +3479,7 @@ function setupFabricEvents() {
 
         // Lógica para resize handles
         if (target?.class === 'resize-handle') {
-            if (['topLeftHandle', 'topRightHandle', 'bottomLeftHandle', 'bottomRightHandle'].includes(target.id)) {
-                target.set('fill', cornerHandlersColorOver);
-            } else {
-                target.set('fill', handlersColorOver);
-            }
+            target.set('fill', cornerHandlersColorOver);
             fabricCanvas.bringObjectToFront(target);
             fabricCanvas.requestRenderAll();
             return;
@@ -3410,11 +3494,7 @@ function setupFabricEvents() {
         // Lógica para resize handles
         if (target?.class === 'resize-handle') {
             // revert object's fill color when not hovering
-            if (['topLeftHandle', 'topRightHandle', 'bottomLeftHandle', 'bottomRightHandle'].includes(target.id)) {
-                target.set('fill', cornerHandlersColor);
-            } else {
-                target.set('fill', handlersColor);
-            }
+            target.set('fill', cornerHandlersColor);
             fabricCanvas.requestRenderAll();
             return;
         }
@@ -3467,238 +3547,70 @@ function setupFabricEvents() {
         }
 
         if (obj.class === 'resize-handle') {
-
-            const topLeftHandle = objects.find(o => o.id === 'topLeftHandle');
-            const topRightHandle = objects.find(o => o.id === 'topRightHandle');
-            const bottomLeftHandle = objects.find(o => o.id === 'bottomLeftHandle');
-            const bottomRightHandle = objects.find(o => o.id === 'bottomRightHandle');
             const drawingAreaObj = objects.find(o => o.id === 'drawingArea');
+            if (!drawingAreaObj) return;
+
+            // Início do arrasto: guarda a proporção da área (pros cantos) e liga a
+            // flag que impede updateDrawingAreaDimensions de recriar os handles
+            if (!isResizeHandleDragging) {
+                isResizeHandleDragging = true;
+                resizeHandleDragRatio = drawingAreaObj.height > 0
+                    ? drawingAreaObj.width / drawingAreaObj.height
+                    : 0;
+            }
+
+            let cx = drawingAreaObj.left;
+            let cy = drawingAreaObj.top;
+            let newWidth = drawingAreaObj.width;
+            let newHeight = drawingAreaObj.height;
+            const cornerOffset = cornerHandleSize / 2 - cornerThickness / 2;
 
             if (obj.id === 'leftHandle' || obj.id === 'rightHandle') {
-                if (drawingAreaObj) {
-                    const newWidth = (Math.abs(obj.left - drawingAreaObj.left) * 2);
-                    drawingAreaWidth.value = Math.round(newWidth);
-                }
+                // Pílula do meio: move SÓ a borda arrastada, a oposta fica ancorada
+                const dir = obj.id === 'rightHandle' ? 1 : -1;
+                const anchor = cx - dir * (newWidth / 2);
+                const edge = anchor + dir * Math.max(dir * (obj.left - anchor), minAreaSide);
+                newWidth = dir * (edge - anchor);
+                cx = (anchor + edge) / 2;
+                obj.set({ left: edge, top: cy });
+            } else if (obj.id === 'topHandle' || obj.id === 'bottomHandle') {
+                const dir = obj.id === 'bottomHandle' ? 1 : -1;
+                const anchor = cy - dir * (newHeight / 2);
+                const edge = anchor + dir * Math.max(dir * (obj.top - anchor), minAreaSide);
+                newHeight = dir * (edge - anchor);
+                cy = (anchor + edge) / 2;
+                obj.set({ left: cx, top: edge });
+            } else {
+                // Cantos: redimensionam em volta do centro, proporcionalmente
+                // (segurando Shift, livre); vale o eixo que o mouse mais expandiu
+                const sx = obj.id.includes('Right') ? 1 : -1;
+                const sy = obj.id.startsWith('bottom') ? 1 : -1;
+                newWidth = Math.max((sx * (obj.left - cx) + cornerOffset) * 2, minAreaSide);
+                newHeight = Math.max((sy * (obj.top - cy) + cornerOffset) * 2, minAreaSide);
 
-                if (obj.id === 'leftHandle') {
-                    const rightHandle = objects.find(o => o.id === 'rightHandle');
-
-
-                    if (rightHandle) {
-                        rightHandle.set({ left: drawingAreaObj.left + (drawingAreaObj.width / 2) });
-                        rightHandle.setCoords();
+                if (!e.e?.shiftKey && resizeHandleDragRatio > 0) {
+                    if (newWidth / resizeHandleDragRatio >= newHeight) {
+                        newHeight = newWidth / resizeHandleDragRatio;
+                    } else {
+                        newWidth = newHeight * resizeHandleDragRatio;
                     }
-
-                    topLeftHandle?.set({
-                        left: obj.left + topLeftHandle.width / 2 - cornerThickness / 2,
-                    });
-                    bottomLeftHandle?.set({
-                        left: obj.left + bottomLeftHandle.width / 2 - cornerThickness / 2,
-                    });
-                    topRightHandle?.set({
-                        left: drawingAreaObj.left + drawingAreaObj.width / 2 - topRightHandle.width / 2 + cornerThickness / 2,
-                    });
-                    bottomRightHandle?.set({
-                        left: drawingAreaObj.left + drawingAreaObj.width / 2 - bottomRightHandle.width / 2 + cornerThickness / 2,
-                    });
-                } else if (obj.id === 'rightHandle') {
-
-                    const leftHandle = objects.find(o => o.id === 'leftHandle');
-                    // adjust left handle position
-                    if (leftHandle) {
-                        leftHandle.set({ left: drawingAreaObj.left - (drawingAreaObj.width / 2) });
-                        leftHandle.setCoords();
-                    }
-
-                    topRightHandle?.set({
-                        left: obj.left - topRightHandle.width / 2 + cornerThickness / 2,
-                    });
-                    bottomRightHandle?.set({
-                        left: obj.left - bottomRightHandle.width / 2 + cornerThickness / 2,
-                    });
-                    topLeftHandle?.set({
-                        left: drawingAreaObj.left - drawingAreaObj.width / 2 + topLeftHandle.width / 2 - cornerThickness / 2,
-                    });
-                    bottomLeftHandle?.set({
-                        left: drawingAreaObj.left - drawingAreaObj.width / 2 + bottomLeftHandle.width / 2 - cornerThickness / 2,
-                    });
                 }
 
-                // adjust top and bottom handles width
-                const topHandle = objects.find(o => o.id === 'topHandle');
-                const bottomHandle = objects.find(o => o.id === 'bottomHandle');
-                if (topHandle) {
-                    topHandle.set({ width: drawingAreaObj.width - 90 });
-                    topHandle.setCoords();
-                }
-                if (bottomHandle) {
-                    bottomHandle.set({ width: drawingAreaObj.width - 90 });
-                    bottomHandle.setCoords();
-                }
+                // Prende o handle arrastado no canto resultante (sem isso ele
+                // seguiria o mouse e descolaria da área quando proporcional)
+                obj.set({
+                    left: cx + sx * (newWidth / 2 - cornerOffset),
+                    top: cy + sy * (newHeight / 2 - cornerOffset),
+                });
             }
+            obj.setCoords();
 
-            if (obj.id === 'topHandle' || obj.id === 'bottomHandle') {
-
-                if (drawingAreaObj) {
-                    const newHeight = Math.abs(obj.top - drawingAreaObj.top) * 2;
-                    drawingAreaHeight.value = Math.round(newHeight);
-                }
-
-                if (obj.id === 'topHandle') {
-                    const bottomHandle = objects.find(o => o.id === 'bottomHandle');
-                    // adjust bottom handle position
-                    if (bottomHandle) {
-                        bottomHandle.set({ top: drawingAreaObj.top + (drawingAreaObj.height / 2) });
-                        bottomHandle.setCoords();
-                    }
-
-                    topLeftHandle?.set({
-                        top: obj.top + topLeftHandle.height / 2 - cornerThickness / 2,
-                    });
-                    topRightHandle?.set({
-                        top: obj.top + topRightHandle.height / 2 - cornerThickness / 2,
-                    });
-                    bottomLeftHandle?.set({
-                        top: drawingAreaObj.top + drawingAreaObj.height / 2 - bottomLeftHandle.height / 2 + cornerThickness / 2,
-                    });
-                    bottomRightHandle?.set({
-                        top: drawingAreaObj.top + drawingAreaObj.height / 2 - bottomRightHandle.height / 2 + cornerThickness / 2,
-                    });
-                } else if (obj.id === 'bottomHandle') {
-                    const topHandle = objects.find(o => o.id === 'topHandle');
-                    // adjust top handle position
-                    if (topHandle) {
-                        topHandle.set({ top: drawingAreaObj.top - (drawingAreaObj.height / 2) });
-                        topHandle.setCoords();
-                    }
-                    bottomLeftHandle?.set({
-                        top: obj.top - bottomLeftHandle.height / 2 + cornerThickness / 2,
-                    });
-                    bottomRightHandle?.set({
-                        top: obj.top - bottomRightHandle.height / 2 + cornerThickness / 2,
-                    });
-                    topLeftHandle?.set({
-                        top: drawingAreaObj.top - drawingAreaObj.height / 2 + topLeftHandle.height / 2 - cornerThickness / 2,
-                    });
-                    topRightHandle?.set({
-                        top: drawingAreaObj.top - drawingAreaObj.height / 2 + topRightHandle.height / 2 - cornerThickness / 2,
-                    });
-                }
-
-                // adjust left and right handles height
-                const leftHandle = objects.find(o => o.id === 'leftHandle');
-                const rightHandle = objects.find(o => o.id === 'rightHandle');
-                if (leftHandle) {
-                    leftHandle.set({ height: drawingAreaObj.height - 90 });
-                    leftHandle.setCoords();
-                }
-                if (rightHandle) {
-                    rightHandle.set({ height: drawingAreaObj.height - 90 });
-                    rightHandle.setCoords();
-                }
-            }
-
-            // Handlers dos cantos para redimensionamento diagonal
-            if (obj.id === 'topLeftHandle' || obj.id === 'topRightHandle' ||
-                obj.id === 'bottomLeftHandle' || obj.id === 'bottomRightHandle'
-            ) {
-
-                if (drawingAreaObj) {
-                    let newWidth, newHeight;
-
-                    if (obj.id === 'topLeftHandle') {
-                        newWidth = Math.abs(drawingAreaObj.left - obj.left + obj.width / 2 - cornerThickness / 2) * 2;
-                        newHeight = Math.abs(drawingAreaObj.top - obj.top + obj.height / 2 - cornerThickness / 2) * 2;
-                    } else if (obj.id === 'topRightHandle') {
-                        newWidth = Math.abs(obj.left - drawingAreaObj.left + obj.width / 2 - cornerThickness / 2) * 2;
-                        newHeight = Math.abs(drawingAreaObj.top - obj.top + obj.height / 2 - cornerThickness / 2) * 2;
-                    } else if (obj.id === 'bottomLeftHandle') {
-                        newWidth = Math.abs(drawingAreaObj.left - obj.left + obj.width / 2 - cornerThickness / 2) * 2;
-                        newHeight = Math.abs(obj.top - drawingAreaObj.top + obj.height / 2 - cornerThickness / 2) * 2;
-                    } else if (obj.id === 'bottomRightHandle') {
-                        newWidth = Math.abs(obj.left - drawingAreaObj.left + obj.width / 2 - cornerThickness / 2) * 2;
-                        newHeight = Math.abs(obj.top - drawingAreaObj.top + obj.height / 2 - cornerThickness / 2) * 2;
-                    }
-
-                    drawingAreaWidth.value = Math.round(newWidth);
-                    drawingAreaHeight.value = Math.round(newHeight);
-
-                    // Atualiza posições de todos os outros handlers
-                    const handles = {
-                        left: objects.find(o => o.id === 'leftHandle'),
-                        right: objects.find(o => o.id === 'rightHandle'),
-                        top: objects.find(o => o.id === 'topHandle'),
-                        bottom: objects.find(o => o.id === 'bottomHandle'),
-                        topLeft: objects.find(o => o.id === 'topLeftHandle'),
-                        topRight: objects.find(o => o.id === 'topRightHandle'),
-                        bottomLeft: objects.find(o => o.id === 'bottomLeftHandle'),
-                        bottomRight: objects.find(o => o.id === 'bottomRightHandle')
-                    };
-
-                    // Atualiza handlers laterais
-                    if (handles.left) {
-                        handles.left.set({
-                            left: drawingAreaObj.left - drawingAreaObj.width / 2,
-                            height: drawingAreaObj.height - 90
-                        });
-                        handles.left.setCoords();
-                    }
-                    if (handles.right) {
-                        handles.right.set({
-                            left: drawingAreaObj.left + drawingAreaObj.width / 2,
-                            height: drawingAreaObj.height - 90
-                        });
-                        handles.right.setCoords();
-                    }
-                    if (handles.top) {
-                        handles.top.set({
-                            top: drawingAreaObj.top - drawingAreaObj.height / 2,
-                            width: drawingAreaObj.width - 90
-                        });
-                        handles.top.setCoords();
-                    }
-                    if (handles.bottom) {
-                        handles.bottom.set({
-                            top: drawingAreaObj.top + drawingAreaObj.height / 2,
-                            width: drawingAreaObj.width - 90
-                        });
-                        handles.bottom.setCoords();
-                    }
-
-                    // Atualiza outros handlers dos cantos
-                    Object.entries(handles).forEach(([key, handle]) => {
-                        if (handle && handle !== obj) {
-                            if (key === 'topLeft') {
-                                handle.set({
-                                    left: drawingAreaObj.left - drawingAreaObj.width / 2 + cornerHandleSize / 2 - cornerThickness / 2,
-                                    top: drawingAreaObj.top - drawingAreaObj.height / 2 + cornerHandleSize / 2 - cornerThickness / 2
-                                });
-                            } else if (key === 'topRight') {
-                                handle.set({
-                                    left: drawingAreaObj.left + drawingAreaObj.width / 2 - cornerHandleSize / 2 + cornerThickness / 2,
-                                    top: drawingAreaObj.top - drawingAreaObj.height / 2 + cornerHandleSize / 2 - cornerThickness / 2
-                                });
-                            } else if (key === 'bottomLeft') {
-                                handle.set({
-                                    left: drawingAreaObj.left - drawingAreaObj.width / 2 + cornerHandleSize / 2 - cornerThickness / 2,
-                                    top: drawingAreaObj.top + drawingAreaObj.height / 2 - cornerHandleSize / 2 + cornerThickness / 2
-                                });
-                            } else if (key === 'bottomRight') {
-                                handle.set({
-                                    left: drawingAreaObj.left + drawingAreaObj.width / 2 - cornerHandleSize / 2 + cornerThickness / 2,
-                                    top: drawingAreaObj.top + drawingAreaObj.height / 2 - cornerHandleSize / 2 + cornerThickness / 2
-                                });
-                            }
-                            handle.setCoords();
-                        }
-                    });
-                }
-            }
-
-            topLeftHandle.setCoords();
-            topRightHandle.setCoords();
-            bottomLeftHandle.setCoords();
-            bottomRightHandle.setCoords();
+            // Centro novo aplicado junto com as dimensões pelo watcher; os demais
+            // handles seguem as bordas novas em tempo real
+            pendingAreaCenter = { x: cx, y: cy };
+            positionAreaHandles({ cx, cy, width: newWidth, height: newHeight, skip: obj });
+            drawingAreaWidth.value = Math.round(newWidth);
+            drawingAreaHeight.value = Math.round(newHeight);
         }
     });
 }
@@ -3902,7 +3814,6 @@ async function loadImages() {
             evented: true,
             selectable: true,
             centeredScaling: true,
-            lockRotation: true,
             lockScalingFlip: true,
             strokeUniform: true,
         }));
@@ -3910,17 +3821,9 @@ async function loadImages() {
             evented: true,
             selectable: true,
             centeredScaling: true,
-            lockRotation: true,
             lockScalingFlip: true,
             strokeUniform: true,
         }));
-
-        imgLeft.setControlsVisibility({
-            mtr: false
-        });
-        imgRight.setControlsVisibility({
-            mtr: false
-        });
 
         applyStyleToControls(imgLeft, imgRight);
 
@@ -4526,6 +4429,7 @@ function enterCropMode(image) {
         top: target.top,
         scaleX: target.scaleX,
         scaleY: target.scaleY,
+        angle: target.angle || 0,
         clipPath: target.clipPath,
         zIndex: fabricCanvas.getObjects().indexOf(target),
         isManuallyMoved: target.isManuallyMoved,
@@ -4533,6 +4437,13 @@ function enterCropMode(image) {
         zoomLevel: zoomLevel.value,
         activeTool: activeTool.value,
     };
+
+    // A matemática do recorte é toda em eixos retos: endireita a foto durante o
+    // modo e devolve o ângulo ao sair (aplicar ou cancelar)
+    if (cropPrev.angle) {
+        target.rotate(0);
+        target.setCoords();
+    }
 
     setActiveTool('select');
     fabricCanvas.discardActiveObject();
@@ -4747,6 +4658,7 @@ function cancelCrop() {
         top: cropPrev.top,
         scaleX: cropPrev.scaleX,
         scaleY: cropPrev.scaleY,
+        angle: cropPrev.angle,
         clipPath: cropPrev.clipPath,
         isManuallyMoved: cropPrev.isManuallyMoved,
     });
@@ -4817,6 +4729,13 @@ async function applyCrop() {
         // marca como posicionada manualmente pra redimensionamentos futuros da área
         // preservarem o offset relativo em vez de recentralizar
         target.set({ isManuallyMoved: true });
+        target.setCoords();
+    }
+
+    // Devolve a rotação que a foto tinha antes do recorte, girando em torno do
+    // centro novo (o posicionamento acima foi todo calculado em eixos retos)
+    if (cropPrev.angle) {
+        target.rotate(cropPrev.angle);
         target.setCoords();
     }
 
